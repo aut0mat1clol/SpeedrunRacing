@@ -456,6 +456,55 @@ async function loadPlayers() {
 
 let liveTimerInterval = null;
 
+// === Синхронизация с LiveSplit ===
+// Для каждого игрока запоминаем "якорь": последнее присланное компонентом
+// время (total_time из LiveSplit) и локальный момент, когда мы его получили.
+// Живой таймер на сайте продолжает счёт ровно с этого значения, поэтому
+// он совпадает с таймером LiveSplit, даже если игрок стартанул не в момент
+// старта гонки. При каждом обновлении из БД якорь пере-синхронизируется.
+const liveTimeAnchors = {}; // playerId -> { time, at }
+
+function syncPlayerAnchor(p) {
+    const id = p.id;
+    // Привязываемся только пока игрок бежит.
+    if (p.status !== 'racing') {
+        delete liveTimeAnchors[id];
+        return;
+    }
+    // Game Time компонент шлёт статично — живой счёт не ведём.
+    if (p.timing_method === 'GameTime') {
+        delete liveTimeAnchors[id];
+        return;
+    }
+
+    const reported = Number(p.total_time) || 0;
+    const prev = liveTimeAnchors[id];
+
+    // Пере-синхронизируемся, если это новый якорь или пришло свежее значение
+    // из LiveSplit (компонент обновил total_time). Небольшой дребезг (<150мс)
+    // между «нашим» расчётом и присланным значением игнорируем, чтобы цифры
+    // не «дёргались» назад на каждом апдейте.
+    if (!prev) {
+        liveTimeAnchors[id] = { time: reported, at: Date.now() };
+        return;
+    }
+    const ourEstimate = prev.time + (Date.now() - prev.at);
+    const drift = Math.abs(ourEstimate - reported);
+    if (reported !== prev.time || drift > 150) {
+        liveTimeAnchors[id] = { time: reported, at: Date.now() };
+    }
+}
+
+// Текущее отображаемое время игрока, синхронизированное с LiveSplit.
+function getLivePlayerTime(playerId, raceStartFallback) {
+    const a = liveTimeAnchors[playerId];
+    if (a) return a.time + (Date.now() - a.at);
+    // Запасной вариант: пока компонент не прислал total_time — считаем от
+    // старта гонки (как раньше), чтобы карточка не висела пустой.
+    if (raceStartFallback) return Date.now() - raceStartFallback;
+    return 0;
+}
+
 function updatePlayersGrid(players, readyMap) {
     const grid = document.getElementById('playersGrid');
 
@@ -482,6 +531,9 @@ function updatePlayersGrid(players, readyMap) {
     const raceStart = raceStartTime || null;
     console.log('[LiveTimer] updatePlayersGrid | raceStartTime =', raceStart, '| racing players =', sorted.filter(p => p.status === 'racing').length);
 
+    // Обновляем/чистим якоря синхронизации с LiveSplit для всех игроков.
+    sorted.forEach(syncPlayerAnchor);
+
     grid.innerHTML = sorted.map(p => {
         const isMe     = p.id === currentPlayerId;
         const isLeader = p.total_time === leaderTime && leaderTime !== Infinity;
@@ -499,8 +551,20 @@ function updatePlayersGrid(players, readyMap) {
         let splitsHtml = '';
         for (let i = 0; i < splitCount; i++) {
             const key       = String(i);
-            const t         = splits[key];
+            let   t         = splits[key];
             const label     = names[key] || ('Split ' + (i + 1));
+            const isLast    = i === splitCount - 1;
+
+            // Финальный сплит = время финиша забега. Компонент при финише
+            // пишет итог в total_time, а в splits[последний] кладёт 0.
+            // Поэтому для финишировавшего игрока подставляем total_time в
+            // последний сплит, если там пусто/0.
+            if (isLast && p.status === 'finished' &&
+                (t === undefined || t === null || t <= 0) &&
+                p.total_time > 0) {
+                t = p.total_time;
+            }
+
             const done      = t !== undefined && t !== null && t > 0;
             const isCurrent = p.current_split === i && p.status === 'racing';
             splitsHtml += `
@@ -523,11 +587,12 @@ function updatePlayersGrid(players, readyMap) {
                         ${formatTime(p.total_time || 0)}
                     </div>
                 `;
-            } else if (raceStart) {
-                // Real Time — показываем живой таймер
+            } else if (liveTimeAnchors[p.id] || raceStart) {
+                // Real Time — показываем живой таймер, синхронизированный с LiveSplit.
+                const initial = getLivePlayerTime(p.id, raceStart);
                 timeDisplay = `
                     <div class="player-time racing-live" data-player-id="${p.id}">
-                        <span class="live-time">--:--.--</span>
+                        <span class="live-time">${formatTime(initial)}</span>
                     </div>
                 `;
             }
@@ -574,8 +639,13 @@ function updatePlayersGrid(players, readyMap) {
         </div>`;
     }).join('');
 
-    // Запускаем живой таймер, если есть racing игроки
-    const hasRacing = sorted.some(p => p.status === 'racing' && raceStart);
+    // Запускаем живой таймер, если есть racing игроки с Real Time
+    // (либо уже есть якорь из LiveSplit, либо известен старт гонки).
+    const hasRacing = sorted.some(p =>
+        p.status === 'racing' &&
+        p.timing_method !== 'GameTime' &&
+        (liveTimeAnchors[p.id] || raceStart)
+    );
     if (hasRacing) {
         startLiveTimer(raceStart);
     } else {
@@ -584,18 +654,19 @@ function updatePlayersGrid(players, readyMap) {
 }
 
 // === Живой таймер ===
-function startLiveTimer(raceStartTimeMs) {
+// Считаем время ПО КАЖДОМУ игроку отдельно — от его якоря синхронизации
+// с LiveSplit (см. getLivePlayerTime), а не от единого старта гонки.
+// Так таймер на сайте совпадает с таймером в LiveSplit у каждого игрока.
+function startLiveTimer(raceStartFallback) {
     stopLiveTimer();
 
     liveTimerInterval = setInterval(() => {
-        const now = Date.now();
-        const elapsed = now - raceStartTimeMs;
-
         document.querySelectorAll('.player-time.racing-live').forEach(el => {
             const timeSpan = el.querySelector('.live-time');
-            if (timeSpan) {
-                timeSpan.textContent = formatTime(elapsed);
-            }
+            if (!timeSpan) return;
+            const playerId = el.getAttribute('data-player-id');
+            const elapsed = getLivePlayerTime(playerId, raceStartFallback);
+            timeSpan.textContent = formatTime(elapsed);
         });
     }, 80); // обновляем ~12 раз в секунду
 }
