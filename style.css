@@ -1,0 +1,418 @@
+/* SpeedRun Race Tracker — Cyberpunk Theme */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+    --primary:      #00ff88;
+    --secondary:    #00d4ff;
+    --bg:           #0a0a0f;
+    --surface:      #12121a;
+    --surface-hover:#1a1a25;
+    --text:         #e0e0e0;
+    --text-dim:     #888;
+    --danger:       #ff4757;
+    --warning:      #ffd93d;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+}
+
+/* ── Header ───────────────────────────────────────────────── */
+.header {
+    background: linear-gradient(135deg, var(--surface) 0%, rgba(0,255,136,0.05) 100%);
+    border-bottom: 1px solid rgba(0,255,136,0.2);
+    padding: 1.5rem 2rem;
+}
+.header-inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+.header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2rem;
+    color: var(--primary);
+    text-shadow: 0 0 20px rgba(0,255,136,0.5);
+    margin-bottom: 0.25rem;
+}
+.header p { color: var(--text-dim); font-size: 0.9rem; }
+
+/* Кнопка хоста в хедере */
+#hostBtn { flex-shrink: 0; }
+#hostBtn.host-active {
+    color: var(--warning);
+    border-color: var(--warning);
+    background: rgba(255,217,61,0.08);
+}
+
+/* ── Панель хоста ─────────────────────────────────────────── */
+.host-panel {
+    background: rgba(255, 217, 61, 0.06);
+    border: 1px solid rgba(255, 217, 61, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+.host-panel-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--warning);
+    font-weight: 600;
+}
+.host-controls {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+.btn-host-start {
+    background: rgba(0,255,136,0.15);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    border-radius: 8px;
+    padding: 0.5rem 1.1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-host-start:hover:not(:disabled) { background: rgba(0,255,136,0.25); box-shadow: 0 0 12px rgba(0,255,136,0.3); }
+.btn-host-start:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.btn-host-finish {
+    background: rgba(255,71,87,0.15);
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    border-radius: 8px;
+    padding: 0.5rem 1.1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-host-finish:hover:not(:disabled) { background: rgba(255,71,87,0.25); box-shadow: 0 0 12px rgba(255,71,87,0.3); }
+.btn-host-finish:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Кнопка кика игрока ───────────────────────────────────── */
+.btn-kick {
+    background: none;
+    border: 1px solid rgba(255,71,87,0.4);
+    color: var(--danger);
+    border-radius: 6px;
+    width: 22px;
+    height: 22px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+.btn-kick:hover { background: rgba(255,71,87,0.2); border-color: var(--danger); }
+
+/* ── Container ────────────────────────────────────────────── */
+.container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+
+/* ── Экран-заголовок ──────────────────────────────────────── */
+.screen-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+.screen-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.5rem;
+    color: var(--primary);
+}
+
+/* ── Кнопка назад ─────────────────────────────────────────── */
+.back-btn {
+    margin-bottom: 1.5rem;
+    color: var(--text-dim);
+    border-color: rgba(255,255,255,0.15);
+}
+.back-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.4); }
+
+/* ── Кнопки ───────────────────────────────────────────────── */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1.25rem;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: transparent;
+}
+.btn-primary  { background: var(--primary); color: var(--bg); border-color: var(--primary); }
+.btn-primary:hover  { box-shadow: 0 0 20px rgba(0,255,136,0.4); transform: translateY(-2px); }
+.btn-secondary { color: var(--secondary); border-color: var(--secondary); }
+.btn-secondary:hover { background: rgba(0,212,255,0.1); }
+.btn-ghost { color: var(--text-dim); border-color: rgba(255,255,255,0.15); }
+.btn-ghost:hover { color: var(--text); border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.05); }
+
+/* ── Список гонок ─────────────────────────────────────────── */
+.race-list-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    gap: 1rem;
+}
+.race-list-card:hover {
+    border-color: var(--secondary);
+    background: var(--surface-hover);
+    transform: translateX(4px);
+    box-shadow: 0 4px 20px rgba(0,212,255,0.1);
+}
+.race-list-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.race-list-game {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--secondary);
+}
+.race-list-category { font-size: 0.875rem; color: var(--text-dim); }
+.race-list-name     { font-size: 0.8rem;   color: var(--text-dim); }
+.race-list-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-shrink: 0;
+}
+.race-list-arrow { color: var(--text-dim); font-size: 1.25rem; }
+
+.loading-text { color: var(--text-dim); text-align: center; padding: 3rem; font-family: 'JetBrains Mono', monospace; }
+
+/* ── Status Badge ─────────────────────────────────────────── */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+.status-badge.waiting  { background: rgba(255,217,61,0.15); color: var(--warning); border: 1px solid var(--warning); }
+.status-badge.active   { background: rgba(0,255,136,0.15);  color: var(--primary); border: 1px solid var(--primary); animation: pulse 2s infinite; }
+.status-badge.finished { background: rgba(0,212,255,0.15);  color: var(--secondary); border: 1px solid var(--secondary); }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.55} }
+
+/* ── Race Info ────────────────────────────────────────────── */
+.race-info {
+    background: var(--surface);
+    border: 1px solid rgba(0,212,255,0.3);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+.race-title { font-family: 'JetBrains Mono', monospace; font-size: 1.2rem; }
+.race-title span { color: var(--secondary); }
+
+/* ── Ready Count ──────────────────────────────────────────── */
+.ready-count {
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+.ready-count h3 { font-family: 'JetBrains Mono', monospace; margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--text-dim); }
+.ready-bar { height: 6px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
+.ready-bar-fill { height: 100%; background: linear-gradient(90deg, var(--primary), var(--secondary)); transition: width 0.5s ease; }
+.ready-text { margin-top: 0.6rem; font-family: 'JetBrains Mono', monospace; font-size: 0.875rem; color: var(--text-dim); }
+.ready-text span { color: var(--primary); font-weight: 700; }
+
+/* ── Countdown ────────────────────────────────────────────── */
+.race-countdown {
+    background: var(--surface);
+    border: 2px solid var(--primary);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    box-shadow: 0 0 40px rgba(0,255,136,0.2);
+}
+.race-countdown.hidden { display: none; }
+.countdown-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    margin-bottom: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.countdown-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 6rem;
+    font-weight: 700;
+    color: var(--primary);
+    line-height: 1;
+    transition: color 0.3s ease;
+    text-shadow: 0 0 30px currentColor;
+    animation: countPulse 1s ease-in-out infinite;
+}
+@keyframes countPulse {
+    0%, 100% { transform: scale(1); }
+    50%       { transform: scale(1.05); }
+}
+
+/* select в панели хоста */
+.countdown-select {
+    background: var(--bg);
+    color: var(--warning);
+    border: 1px solid rgba(255,217,61,0.4);
+    border-radius: 6px;
+    padding: 0.4rem 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    cursor: pointer;
+}
+.countdown-select:focus { outline: none; border-color: var(--warning); }
+
+/* ── Timer ────────────────────────────────────────────────── */
+.race-timer {
+    background: var(--surface);
+    border: 2px solid var(--primary);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    box-shadow: 0 0 30px rgba(0,255,136,0.15);
+}
+.race-timer.hidden { display: none; }
+.timer-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 3.5rem;
+    font-weight: 700;
+    color: var(--primary);
+    text-shadow: 0 0 20px rgba(0,255,136,0.5);
+}
+
+/* ── Players Grid ─────────────────────────────────────────── */
+.players-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.player-card {
+    background: var(--surface);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 1.25rem;
+    transition: all 0.25s ease;
+    animation: fadeIn 0.3s ease;
+}
+.player-card:hover { transform: translateY(-3px); border-color: var(--secondary); box-shadow: 0 8px 24px rgba(0,212,255,0.1); }
+.player-card.ready    { border-color: rgba(0,255,136,0.4); }
+.player-card.racing   { border-color: rgba(255,217,61,0.5); }
+.player-card.finished { border-color: rgba(0,212,255,0.5); }
+
+@keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+.player-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.player-name { font-family: 'JetBrains Mono', monospace; font-size: 1rem; font-weight: 600; }
+.player-name em { font-style: normal; color: var(--text-dim); font-size: 0.8em; }
+
+.player-status { padding: 0.2rem 0.6rem; border-radius: 10px; font-size: 0.7rem; font-weight: 600; }
+.player-status.ready    { background: rgba(0,255,136,0.15); color: var(--primary); }
+.player-status.racing   { background: rgba(255,217,61,0.15); color: var(--warning); }
+.player-status.finished { background: rgba(0,212,255,0.15); color: var(--secondary); }
+
+.player-time { font-family: 'JetBrains Mono', monospace; font-size: 1.75rem; color: var(--text); margin-bottom: 0.75rem; }
+.player-time.leader { color: var(--primary); }
+.player-time.behind { color: var(--danger); }
+
+.splits-list { list-style: none; }
+.split-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.35rem 0.5rem;
+    border-radius: 5px;
+    margin-bottom: 0.2rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+}
+.split-item.current   { background: rgba(0,255,136,0.08); border-left: 3px solid var(--primary); }
+.split-item.completed { color: var(--primary); }
+.split-item.pending   { color: var(--text-dim); }
+.split-delta { color: var(--text-dim); }
+.split-delta.completed { color: inherit; }
+
+/* ── Empty / Loading ──────────────────────────────────────── */
+.empty-state { grid-column: 1/-1; text-align: center; padding: 4rem 2rem; color: var(--text-dim); }
+.empty-state h3 { font-family: 'JetBrains Mono', monospace; margin-bottom: 0.75rem; }
+
+.last-updated { text-align: center; margin-top: 1rem; color: var(--text-dim); font-size: 0.8rem; }
+
+/* ── Modal ────────────────────────────────────────────────── */
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 1000; }
+.modal.active { display: flex; }
+.modal-content { background: var(--surface); border: 1px solid var(--secondary); border-radius: 12px; padding: 2rem; max-width: 480px; width: 90%; }
+.modal h2 { font-family: 'JetBrains Mono', monospace; margin-bottom: 1.25rem; }
+.modal-input { width: 100%; padding: 0.7rem 1rem; background: var(--bg); border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; color: var(--text); font-family: 'JetBrains Mono', monospace; margin-bottom: 1rem; }
+.modal-input:focus { outline: none; border-color: var(--primary); }
+.modal-actions { display: flex; gap: 0.75rem; justify-content: flex-end; }
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .header h1 { font-size: 1.4rem; }
+    .race-info  { flex-direction: column; text-align: center; }
+    .timer-display { font-size: 2.5rem; }
+    .players-grid  { grid-template-columns: 1fr; }
+    .race-list-card { flex-direction: column; align-items: flex-start; }
+}
