@@ -2,16 +2,10 @@
 // SpeedRun Race Tracker — app.js (с системой логина)
 // ============================================================
 
-// === Ключи из Vercel Environment Variables ===
-const SUPABASE_URL      = (window.ENV && window.ENV.SUPABASE_URL && window.ENV.SUPABASE_URL !== '{{SUPABASE_URL}}') 
-                          ? window.ENV.SUPABASE_URL 
-                          : 'https://bijlcubwwotzbhukbabw.supabase.co';
-
-const SUPABASE_ANON_KEY = (window.ENV && window.ENV.SUPABASE_ANON_KEY && window.ENV.SUPABASE_ANON_KEY !== '{{SUPABASE_ANON_KEY}}') 
-                          ? window.ENV.SUPABASE_ANON_KEY 
-                          : 'твой_ключ_сюда';
-
-const HOST_PASSWORD     = (window.ENV && window.ENV.HOST_PASSWORD)     || 'speedrun2025';
+// === Ключи берутся из config.js (не попадает в Git) ===
+const SUPABASE_URL      = window.SUPABASE_URL      || 'https://bijlcubwwotzbhukbabw.supabase.co';
+const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'твой_ключ_сюда';
+const HOST_PASSWORD     = window.HOST_PASSWORD     || 'speedrun2025';
 
 const { createClient } = window.supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
