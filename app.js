@@ -422,10 +422,13 @@ function updateRaceUI(race) {
         raceStartTime = null;
     }
 
-    if (race.status === 'finished') {
+    // Результаты: показываем для завершённой гонки (снимок) и для активной
+    // (живой топ по мере финиша). showRaceResults сам решает видимость.
+    if (race.status === 'finished' || race.status === 'active') {
         showRaceResults();
     } else {
-        document.getElementById('raceResults').style.display = 'none';
+        const rr = document.getElementById('raceResults');
+        if (rr) rr.style.display = 'none';
     }
 }
 
@@ -445,9 +448,101 @@ async function loadPlayers() {
         document.getElementById('lastUpdated').textContent =
             'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
 
+        // Живой топ: показываем по мере финиша участников.
+        showRaceResults();
+
+        // Авто-завершение: когда ВСЕ участники финишировали — фиксируем
+        // снимок топа и переводим гонку в finished (делает только хост,
+        // чтобы запись инициировалась один раз).
+        if (canManageCurrentRace) maybeFinalizeRace(players);
+
         // Авто-старт: только если пользователь может управлять гонкой
         if (canManageCurrentRace) checkAutoStart(players, readyMap);
     } catch (err) { console.error(err); }
+}
+
+// Все ли активные участники добежали → авто-фиксация снимка топа.
+let finalizeInProgress = false;
+async function maybeFinalizeRace(players) {
+    if (finalizeInProgress) return;
+    if (!players || players.length === 0) return;
+
+    // Участвующие — те, кто реально вступил в забег.
+    const racers = players.filter(p => ['racing', 'finished'].includes(p.status));
+    if (racers.length === 0) return;
+
+    const allFinished = racers.every(p => p.status === 'finished');
+    if (!allFinished) return;
+
+    // Гонка ещё активна? Проверяем, чтобы не фиксировать повторно.
+    const { data: race } = await db.from('races')
+        .select('status').eq('id', currentRaceId).single();
+    if (!race || race.status !== 'active') return;
+
+    finalizeInProgress = true;
+    try {
+        await finalizeRaceResults(players);
+        await db.from('races')
+            .update({ status: 'finished' })
+            .eq('id', currentRaceId)
+            .eq('status', 'active');
+        await loadRaceData();
+    } catch (err) {
+        console.error('Ошибка авто-завершения гонки:', err);
+    } finally {
+        finalizeInProgress = false;
+    }
+}
+
+// Сохранить снимок итогового топа в race_results.
+// players можно не передавать — тогда подгрузим сами.
+async function finalizeRaceResults(players) {
+    if (!currentRaceId) return;
+
+    if (!players) {
+        const { data } = await db.from('players')
+            .select('*').eq('race_id', currentRaceId);
+        players = data || [];
+    }
+
+    // Финишировавшие → по времени; не финишировавшие → DNF в конце.
+    const finished = players
+        .filter(p => p.status === 'finished' && p.total_time > 0)
+        .sort((a, b) => (a.total_time || 0) - (b.total_time || 0));
+    const dnf = players.filter(p =>
+        !(p.status === 'finished' && p.total_time > 0));
+
+    const rows = [];
+    finished.forEach((p, i) => {
+        rows.push({
+            race_id:       currentRaceId,
+            place:         i + 1,
+            player_id:     p.id,
+            player_name:   p.name,
+            total_time:    p.total_time,
+            is_dnf:        false,
+            timing_method: p.timing_method || null
+        });
+    });
+    dnf.forEach((p, i) => {
+        rows.push({
+            race_id:       currentRaceId,
+            place:         finished.length + i + 1,
+            player_id:     p.id,
+            player_name:   p.name,
+            total_time:    null,
+            is_dnf:        true,
+            timing_method: p.timing_method || null
+        });
+    });
+
+    if (rows.length === 0) return;
+
+    // upsert по (race_id, player_id), чтобы повторная фиксация не падала.
+    const { error } = await db
+        .from('race_results')
+        .upsert(rows, { onConflict: 'race_id,player_id' });
+    if (error) console.error('Ошибка сохранения снимка топа:', error);
 }
 
 // ============================================================
@@ -720,6 +815,9 @@ function setupRealtimeListeners() {
         .on('postgres_changes',
             { event: '*', schema: 'public', table: 'ready',   filter: 'race_id=eq.' + currentRaceId },
             () => loadPlayers())
+        .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'race_results', filter: 'race_id=eq.' + currentRaceId },
+            () => showRaceResults())
         .subscribe();
 }
 
@@ -858,7 +956,10 @@ async function hostStartRace() {
 
 async function hostFinishRace() {
     if (!currentRaceId || !canManageCurrentRace) return;
-    if (!confirm('Завершить гонку? Она исчезнет из списка активных.')) return;
+    if (!confirm('Завершить гонку? Не финишировавшие попадут в топ как DNF. Гонка исчезнет из списка активных.')) return;
+
+    // Сначала фиксируем снимок топа (отстающие → DNF), затем закрываем гонку.
+    await finalizeRaceResults();
 
     const { error } = await db.from('races')
         .update({ status: 'finished' })
@@ -910,50 +1011,112 @@ async function hostDeleteRace() {
     }
 }
 
-// ═══ НОВАЯ ФУНКЦИЯ: Показать результаты гонки ═══
+// ═══ Показать результаты гонки (live-топ + снимок) ═══
+// Если у гонки есть сохранённый снимок (race_results) — показываем его.
+// Иначе строим живой топ из текущих финишировавших игроков.
 async function showRaceResults() {
-    const container = document.getElementById('raceResultsContainer');
+    const container  = document.getElementById('raceResultsContainer');
     const resultsDiv = document.getElementById('raceResults');
+    if (!container || !resultsDiv) return;
 
     try {
-        const { data: finishedPlayers } = await db
-            .from('players')
+        // 1) Пытаемся показать сохранённый снимок завершённой гонки.
+        const { data: snapshot } = await db
+            .from('race_results')
             .select('*')
             .eq('race_id', currentRaceId)
-            .eq('status', 'finished')
-            .order('total_time', { ascending: true });
+            .order('place', { ascending: true });
 
-        if (!finishedPlayers || finishedPlayers.length === 0) {
+        if (snapshot && snapshot.length > 0) {
+            const rows = snapshot.map(r => ({
+                name: r.player_name,
+                total_time: r.total_time,
+                is_dnf: r.is_dnf,
+                timing_method: r.timing_method,
+                place: r.place
+            }));
+            container.innerHTML = renderResultsHtml(rows, { finalized: true });
+            resultsDiv.style.display = 'block';
+            return;
+        }
+
+        // 2) Иначе — живой топ из игроков.
+        const { data: players } = await db
+            .from('players')
+            .select('*')
+            .eq('race_id', currentRaceId);
+
+        if (!players || players.length === 0) {
             resultsDiv.style.display = 'none';
             return;
         }
 
-        let html = '<div style="display:flex;flex-direction:column;gap:0.5rem;">';
+        const finished = players
+            .filter(p => p.status === 'finished' && p.total_time > 0)
+            .sort((a, b) => (a.total_time || 0) - (b.total_time || 0))
+            .map((p, i) => ({
+                name: p.name,
+                total_time: p.total_time,
+                is_dnf: false,
+                timing_method: p.timing_method,
+                place: i + 1
+            }));
 
-        finishedPlayers.forEach((p, index) => {
-            const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`;
-            const time = formatTime(p.total_time);
+        if (finished.length === 0) {
+            resultsDiv.style.display = 'none';
+            return;
+        }
 
-            html += `
-                <div style="background:var(--surface-hover);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
-                    <div style="display:flex;align-items:center;gap:12px;">
-                        <span style="font-size:1.4rem;">${medal}</span>
-                        <span style="font-weight:600;font-family:JetBrains Mono,monospace;">${p.name}</span>
-                    </div>
-                    <div style="font-family:JetBrains Mono,monospace;font-size:1.1rem;color:var(--primary);font-weight:700;">
-                        ${time}
-                    </div>
-                </div>
-            `;
+        container.innerHTML = renderResultsHtml(finished, {
+            finalized: false,
+            finishedCount: finished.length,
+            totalCount: players.length
         });
-
-        html += '</div>';
-        container.innerHTML = html;
         resultsDiv.style.display = 'block';
 
     } catch (err) {
         console.error('Ошибка загрузки результатов:', err);
     }
+}
+
+// Рендер таблицы топа (используется и для live, и для снимка).
+function renderResultsHtml(rows, opts = {}) {
+    const { finalized, finishedCount, totalCount } = opts;
+
+    let header = '';
+    if (finalized) {
+        header = `<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.6rem;">🏁 Итоговый топ гонки</div>`;
+    } else {
+        header = `<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.6rem;">
+            ⏳ Финишировали: ${finishedCount} из ${totalCount} — топ обновляется по мере финиша
+        </div>`;
+    }
+
+    let html = header + '<div style="display:flex;flex-direction:column;gap:0.5rem;">';
+
+    rows.forEach((p) => {
+        const place = p.place;
+        const medal = p.is_dnf ? 'DNF'
+            : place === 1 ? '🥇' : place === 2 ? '🥈' : place === 3 ? '🥉' : `#${place}`;
+        const time  = p.is_dnf ? '—' : formatTime(p.total_time);
+        const gt    = p.timing_method === 'GameTime'
+            ? '<span style="font-size:0.65rem;color:#ffd93d;margin-right:4px;">GT</span>' : '';
+
+        html += `
+            <div style="background:var(--surface-hover);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;${p.is_dnf ? 'opacity:0.55;' : ''}">
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span style="font-size:1.2rem;min-width:2.2rem;text-align:center;font-weight:700;">${medal}</span>
+                    <span style="font-weight:600;font-family:JetBrains Mono,monospace;">${p.name}</span>
+                </div>
+                <div style="font-family:JetBrains Mono,monospace;font-size:1.1rem;color:var(--primary);font-weight:700;">
+                    ${gt}${time}
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    return html;
 }
 
 // ============================================================
