@@ -3,8 +3,14 @@
 // ============================================================
 
 // === Ключи из Vercel Environment Variables ===
-const SUPABASE_URL      = (window.ENV && window.ENV.SUPABASE_URL)      || 'https://bijlcubwwotzbhukbabw.supabase.co';
-const SUPABASE_ANON_KEY = (window.ENV && window.ENV.SUPABASE_ANON_KEY) || 'твой_ключ_сюда';
+const SUPABASE_URL      = (window.ENV && window.ENV.SUPABASE_URL && window.ENV.SUPABASE_URL !== '{{SUPABASE_URL}}') 
+                          ? window.ENV.SUPABASE_URL 
+                          : 'https://bijlcubwwotzbhukbabw.supabase.co';
+
+const SUPABASE_ANON_KEY = (window.ENV && window.ENV.SUPABASE_ANON_KEY && window.ENV.SUPABASE_ANON_KEY !== '{{SUPABASE_ANON_KEY}}') 
+                          ? window.ENV.SUPABASE_ANON_KEY 
+                          : 'твой_ключ_сюда';
+
 const HOST_PASSWORD     = (window.ENV && window.ENV.HOST_PASSWORD)     || 'speedrun2025';
 
 const { createClient } = window.supabase;
