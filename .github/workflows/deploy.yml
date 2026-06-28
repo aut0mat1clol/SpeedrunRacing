@@ -24,20 +24,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create config.js safely
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          HOST_PASSWORD: ${{ secrets.HOST_PASSWORD }}
+      - name: Create config.js
         run: |
-          cat > config.js << 'ENDOFFILE'
-          // ============================================================
-          // SpeedRun Race Tracker — config.js (auto-generated)
-          // ============================================================
-          window.SUPABASE_URL      = '${SUPABASE_URL}';
-          window.SUPABASE_ANON_KEY = '${SUPABASE_ANON_KEY}';
-          window.HOST_PASSWORD     = '${HOST_PASSWORD}';
-          ENDOFFILE
+          echo 'window.SUPABASE_URL = "${{ secrets.SUPABASE_URL }}";' > config.js
+          echo 'window.SUPABASE_ANON_KEY = "${{ secrets.SUPABASE_ANON_KEY }}";' >> config.js
+          echo 'window.HOST_PASSWORD = "${{ secrets.HOST_PASSWORD }}";' >> config.js
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
