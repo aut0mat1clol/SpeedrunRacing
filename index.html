@@ -1,208 +1,223 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🏁 SpeedRun Race Tracker</title>
+    <title>SpeedRun Race Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800;900&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%230a0a0f' width='100' height='100' rx='20'/><path d='M25 70 L50 30 L75 70' stroke='%2300ff88' stroke-width='8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23131a10' width='100' height='100' rx='22'/><path d='M22 72 L50 26 L78 72' stroke='%236aad38' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+    <script>(function(){var t=localStorage.getItem('srt-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-    <header class="header">
-        <div class="header-inner">
-            <div>
-                <h1>🏁 SpeedRun Race Tracker</h1>
-                <p>Отслеживание соревновательных гонок в реальном времени</p>
-            </div>
-            
-            <!-- НОВЫЙ БЛОК АВТОРИЗАЦИИ -->
-            <div class="auth-header">
-                <div id="userInfo" style="display:none; align-items:center; gap:0.75rem;">
-                    <div>
-                        <span id="userNameDisplay" style="font-weight:600;color:var(--primary);"></span>
-                        <span id="userRoleDisplay" class="role-badge"></span>
-                    </div>
+    <!-- ===================== NAV ===================== -->
+    <nav class="top-nav">
+        <div class="nav-inner">
+            <a href="#home" class="nav-brand">SpeedRun Tracker</a>
+            <div class="nav-right">
+                <a href="#races" data-nav="races">Гонки</a>
+                <a href="#active" data-nav="active">Активные</a>
+                <a href="#howto" data-nav="howto">Как подключиться</a>
+                <div id="userInfo" class="user-info" style="display:none;">
+                    <span class="user-name" id="userNameDisplay"></span>
+                    <span class="user-role" id="userRoleDisplay"></span>
                     <button class="btn btn-ghost" onclick="logoutUser()">Выйти</button>
                 </div>
-                
-                <button class="btn btn-ghost" id="authBtn" onclick="showAuthModal()">
-                    🔐 Войти / Регистрация
+                <button class="btn btn-ghost" id="authBtn" onclick="showAuthModal()">Войти</button>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему" aria-label="Сменить тему">
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
             </div>
         </div>
-    </header>
+    </nav>
 
-    <main class="container">
+    <!-- ===================== HOME ===================== -->
+    <section class="page" id="page-home">
+        <header class="main-header">
+            <div class="header-content">
+                <h1>SpeedRun Race Tracker</h1>
+                <p class="subtitle">Соревновательные гонки в реальном времени</p>
+                <div class="header-stats">
+                    <div class="stat"><div class="stat-value">⚡</div><div class="stat-label">Live‑таймер</div></div>
+                    <div class="stat"><div class="stat-value">🏁</div><div class="stat-label">Сплиты</div></div>
+                    <div class="stat"><div class="stat-value">∞</div><div class="stat-label">Игроков</div></div>
+                </div>
+                <div style="margin-top:2.25rem;">
+                    <a href="#races" class="btn btn-primary" style="font-size:1.05rem;padding:14px 30px;">Посмотреть гонки →</a>
+                </div>
+            </div>
+        </header>
+        <main class="main-content container" style="text-align:center;">
+            <h2 style="margin-bottom:1rem;font-size:1.7rem;">Добро пожаловать!</h2>
+            <p style="max-width:620px;margin:0 auto;">
+                Здесь ты можешь создавать и участвовать в соревновательных гонках по спидрану.<br>
+                Всё происходит в реальном времени через LiveSplit.
+            </p>
+        </main>
+    </section>
 
-        <!-- ══ ЭКРАН СПИСКА ГОНОК ══════════════════════════════════ -->
-        <div id="raceListScreen">
-            <div class="screen-header">
-                <h2 class="screen-title">Активные гонки</h2>
-                <button class="btn btn-ghost" onclick="loadRaceList()">↻ Обновить</button>
+    <!-- ===================== RACES (список) ===================== -->
+    <section class="page" id="page-races" hidden>
+        <!-- id raceListScreen нужен app.js -->
+        <div class="container" id="raceListScreen">
+            <div class="section-header">
+                <h1 style="margin:0;">Все гонки</h1>
+                <button class="btn btn-primary" id="createRaceBtn" onclick="showCreateRace()" style="display:none;">+ Создать гонку</button>
             </div>
             <div id="raceListContainer">
-                <p class="loading-text">⏳ Загрузка...</p>
+                <p class="loading-text">Загрузка гонок…</p>
             </div>
         </div>
+    </section>
 
-        <!-- ══ ЭКРАН КОНКРЕТНОЙ ГОНКИ ══════════════════════════════ -->
-        <div id="raceScreen" style="display:none">
+    <!-- ===================== RACE (детали) ===================== -->
+    <section class="page" id="page-race" hidden>
+        <!-- id raceScreen нужен app.js -->
+        <div class="container" id="raceScreen">
+            <p style="margin-bottom:1rem;"><a href="#races" class="btn btn-ghost btn-back">← Назад к гонкам</a></p>
 
-            <button class="btn btn-ghost back-btn" onclick="showRaceList()">← Все гонки</button>
+            <div class="race-header">
+                <div>
+                    <h1 id="raceName">—</h1>
+                    <p id="raceMeta"><span id="raceGame"></span> · <span id="raceCategory"></span></p>
+                </div>
+                <div id="raceStatusBadge" class="status-badge waiting">
+                    <span id="raceStatus" class="status-badge waiting" style="display:none;"></span>
+                    <span id="statusText">—</span>
+                </div>
+            </div>
 
-            <!-- Панель хоста (видна только если авторизован как хост) -->
-            <div id="hostPanel" class="host-panel" style="display:none">
-                <div class="host-panel-title">⚙ Панель хоста</div>
-                <div class="host-controls">
-                    <button class="btn btn-host-start" onclick="hostStartRace()">▶ Начать гонку</button>
-                    <select id="countdownSelect" class="countdown-select">
+            <div id="hostPanel" style="display:none;">
+                <h3>Панель организатора</h3>
+                <button class="btn btn-primary btn-host-start" onclick="hostStartRace()">▶ Старт гонки</button>
+                <button class="btn btn-danger btn-host-finish" onclick="hostFinishRace()">🏁 Завершить</button>
+                <label style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text-dim);">
+                    Обратный отсчёт:
+                    <select id="countdownSelect" class="modal-input" style="width:auto;margin:0;padding:8px 12px;">
                         <option value="5">5 сек</option>
                         <option value="10" selected>10 сек</option>
                         <option value="15">15 сек</option>
                         <option value="30">30 сек</option>
-                        <option value="60">60 сек</option>
                     </select>
-                    <button class="btn btn-host-finish" onclick="hostFinishRace()">⏹ Завершить гонку</button>
-                </div>
+                </label>
+                <button class="btn btn-danger btn-host-delete" id="hostDeleteBtn" onclick="hostDeleteRace()" style="display:none;margin-left:auto;">🗑️ Удалить гонку</button>
             </div>
 
-            <!-- Race Info -->
-            <section class="race-info" id="raceInfo">
-                <div class="race-title">
-                    <div id="raceName" style="font-size:0.85em;color:var(--text-dim);margin-bottom:0.25rem"></div>
-                    <span id="raceGame">---</span> — <span id="raceCategory">---</span>
-                </div>
-                <div class="status-badge waiting" id="raceStatus">
-                    <span class="status-dot"></span>
-                    <span id="statusText">Ожидание</span>
-                </div>
-            </section>
-
-            <!-- Ready Count -->
-            <section class="ready-count">
+            <div class="ready-count">
                 <h3>Готовность участников</h3>
-                <div class="ready-bar">
-                    <div class="ready-bar-fill" id="readyBarFill" style="width:0%"></div>
-                </div>
+                <div class="ready-bar"><div class="ready-bar-fill" id="readyBarFill" style="width:0%"></div></div>
                 <p class="ready-text">Готовы: <span id="readyCount">0</span> / <span id="totalPlayers">0</span></p>
-            </section>
+            </div>
 
-            <!-- Countdown (убран для чистоты) -->
-
-            <!-- Timer (убран для чистоты) -->
-
-            <!-- Players -->
-            <section class="players-grid" id="playersGrid">
-                <div class="empty-state"><h3>⏳ Загрузка участников...</h3></div>
-            </section>
-
-            <p class="last-updated" id="lastUpdated">Обновлено: ---</p>
-
-            <!-- ═══ ТОП ГОНКИ (показывается после финиша) ═══ -->
-            <div id="raceResults" class="race-results" style="display:none; margin-top:2rem;">
-                <h3 style="margin-bottom:1rem;color:var(--primary);font-family:JetBrains Mono,monospace;">🏆 Результаты гонки</h3>
+            <div id="raceResults" style="display:none;">
+                <div class="section-header"><h2>Результаты</h2></div>
                 <div id="raceResultsContainer"></div>
             </div>
 
-            <!-- ГАЙД: Как присоединиться -->
-            <div class="how-to-join" style="margin-top:2rem;background:var(--surface);border:1px solid rgba(0,212,255,0.2);border-radius:12px;padding:1.5rem;">
-                <h3 style="margin-bottom:1rem;color:var(--secondary);font-family:JetBrains Mono,monospace;">📘 Как присоединиться к гонке?</h3>
-                
-                <ol style="line-height:1.8;color:var(--text);padding-left:1.25rem;">
-                    <li><strong>Скачай компонент</strong> для LiveSplit (см. ниже)</li>
-                    <li><strong>Зарегистрируйся</strong> на этом сайте (кнопка в шапке)</li>
-                    <li><strong>Войди</strong> в аккаунт в LiveSplit компоненте</li>
-                    <li><strong>Введи ID гонки</strong> в настройках компонента</li>
-                    <li><strong>Нажми "Подключиться"</strong> в LiveSplit</li>
-                    <li><strong>Подтверди готовность</strong> кнопкой <strong>"Готов!"</strong> в LiveSplit</li>
-                </ol>
-                
-                <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid rgba(255,255,255,0.1);font-size:0.9rem;color:var(--text-dim);">
-                    ⚠️ Готовность подтверждается <strong>только через LiveSplit</strong>.<br>
-                    Здесь на сайте можно только просматривать гонку.
-                </div>
+            <div class="section-header">
+                <h2>Участники</h2>
+            </div>
+
+            <div id="playersGrid" class="players-grid">
+                <p class="loading-text">Загрузка участников…</p>
+            </div>
+
+            <p class="last-updated" id="lastUpdated">Обновлено: —</p>
+        </div>
+    </section>
+
+    <!-- ===================== ACTIVE ===================== -->
+    <section class="page" id="page-active" hidden>
+        <div class="container">
+            <h1>Активные игроки</h1>
+            <div id="activePlayersContainer">
+                <p class="loading-text">Загрузка игроков…</p>
             </div>
         </div>
+    </section>
 
-    </main>
-
-    <!-- ══ МОДАЛКА АВТОРИЗАЦИИ (ЛОГИН + РЕГИСТРАЦИЯ) ═════════════ -->
-    <div class="modal" id="authModal">
-        <div class="modal-content" style="max-width:420px;">
-            <div id="authTabs" style="display:flex;gap:0.5rem;margin-bottom:1.5rem;">
-                <button onclick="switchAuthTab('login')" id="loginTab" class="btn btn-primary" style="flex:1">Войти</button>
-                <button onclick="switchAuthTab('register')" id="registerTab" class="btn btn-secondary" style="flex:1">Регистрация</button>
+    <!-- ===================== HOWTO ===================== -->
+    <section class="page" id="page-howto" hidden>
+        <div class="container">
+            <h1>Как подключиться к гонке</h1>
+            <div class="howto-list">
+                <a class="howto-item howto-download" href="Component/SpeedrunRaceComponent.dll" download="SpeedrunRaceComponent.dll">
+                    <div class="howto-number">01</div>
+                    <div>
+                        <strong>Установи компонент</strong><br>
+                        <span>Добавь SpeedRun Race Tracker в LiveSplit</span>
+                        <span class="download-badge">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
+                            Скачать .dll
+                        </span>
+                    </div>
+                </a>
+                <div class="howto-item"><div class="howto-number">02</div><div><strong>Зарегистрируйся</strong><br><span>Создай аккаунт на этом сайте</span></div></div>
+                <div class="howto-item"><div class="howto-number">03</div><div><strong>Авторизуйся в LiveSplit</strong><br><span>Введи логин и пароль в настройках компонента</span></div></div>
+                <div class="howto-item"><div class="howto-number">04</div><div><strong>Подключись к гонке</strong><br><span>Введи ID гонки и нажми «Подключиться»</span></div></div>
             </div>
+        </div>
+    </section>
 
-            <!-- ЛОГИН -->
+    <!-- ===================== SHARED MODALS ===================== -->
+    <div class="modal" id="authModal">
+        <div class="modal-content">
+            <h2>Авторизация</h2>
+            <div class="auth-tabs">
+                <button class="btn btn-primary" id="loginTab" onclick="switchAuthTab('login')">Вход</button>
+                <button class="btn btn-secondary" id="registerTab" onclick="switchAuthTab('register')">Регистрация</button>
+            </div>
             <div id="loginForm">
-                <input type="text" class="modal-input" id="loginUsername" placeholder="Имя пользователя">
-                <input type="password" class="modal-input" id="loginPassword" placeholder="Пароль">
-                <p id="loginError" style="color:var(--danger);font-size:0.85rem;display:none;margin-bottom:0.75rem;"></p>
-                
+                <div id="loginError" class="modal-error"></div>
+                <label for="loginUsername">Логин</label>
+                <input class="modal-input" id="loginUsername" placeholder="Введите логин" autocomplete="username">
+                <label for="loginPassword">Пароль</label>
+                <input class="modal-input" id="loginPassword" type="password" placeholder="Введите пароль" autocomplete="current-password">
                 <div class="modal-actions">
-                    <button class="btn btn-secondary" onclick="closeAuthModal()">Отмена</button>
+                    <button class="btn btn-ghost" onclick="closeAuthModal()">Отмена</button>
                     <button class="btn btn-primary" onclick="loginUser()">Войти</button>
                 </div>
             </div>
-
-            <!-- РЕГИСТРАЦИЯ -->
             <div id="registerForm" style="display:none;">
-                <input type="text" class="modal-input" id="regUsername" placeholder="Имя пользователя">
-                <input type="password" class="modal-input" id="regPassword" placeholder="Пароль">
-                <p style="font-size:0.8rem;color:var(--text-dim);margin-bottom:1rem;">
-                    Регистрируясь, вы получаете роль "Игрок"
-                </p>
-                <p id="registerError" style="color:var(--danger);font-size:0.85rem;display:none;margin-bottom:0.75rem;"></p>
-                
+                <div id="registerError" class="modal-error"></div>
+                <label for="regUsername">Логин</label>
+                <input class="modal-input" id="regUsername" placeholder="Придумайте логин" autocomplete="username">
+                <label for="regPassword">Пароль</label>
+                <input class="modal-input" id="regPassword" type="password" placeholder="Придумайте пароль" autocomplete="new-password">
                 <div class="modal-actions">
-                    <button class="btn btn-secondary" onclick="closeAuthModal()">Отмена</button>
-                    <button class="btn btn-primary" onclick="registerUser()">Зарегистрироваться</button>
+                    <button class="btn btn-ghost" onclick="closeAuthModal()">Отмена</button>
+                    <button class="btn btn-primary" onclick="registerUser()">Создать аккаунт</button>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ══ Модалка: создание гонки ══════════════════════════════════ -->
-    <div class="modal" id="createRaceModal">
+<div class="modal" id="createRaceModal">
         <div class="modal-content">
-            <h2>🏁 Создать гонку</h2>
-            
-            <div style="margin-bottom: 12px;">
-                <label style="font-size:0.85rem;color:var(--text-dim);">ID гонки (сгенерирован автоматически):</label>
-                <div style="display:flex;gap:8px;margin-top:4px;">
-                    <input type="text" class="modal-input" id="newRaceId" readonly style="flex:1;background:#1a1a25;">
-                    <button class="btn btn-secondary" onclick="generateNewRaceId()" style="padding:0 12px;">🔄</button>
-                </div>
-            </div>
-            
-            <input type="text" class="modal-input" id="newRaceName"     placeholder="Название гонки (опционально)">
-            <input type="text" class="modal-input" id="newRaceGame"     placeholder="Игра">
-            <input type="text" class="modal-input" id="newRaceCategory" placeholder="Категория (Any%, 100%...)">
+            <h2>Создать гонку</h2>
+            <label for="newRaceId">ID гонки</label>
+            <input class="modal-input" id="newRaceId" placeholder="например: any-percent-1">
+            <label for="newRaceName">Название</label>
+            <input class="modal-input" id="newRaceName" placeholder="Название гонки">
+            <label for="newRaceGame">Игра</label>
+            <input class="modal-input" id="newRaceGame" placeholder="Название игры">
+            <label for="newRaceCategory">Категория</label>
+            <input class="modal-input" id="newRaceCategory" placeholder="например: Any%">
             <div class="modal-actions">
-                <button class="btn btn-secondary" onclick="closeCreateRace()">Отмена</button>
-                <button class="btn btn-primary"   onclick="submitCreateRace()">Создать</button>
+                <button class="btn btn-ghost" onclick="closeCreateRace()">Отмена</button>
+                <button class="btn btn-primary" onclick="createRace()">Создать</button>
             </div>
         </div>
     </div>
 
-    <!-- ══ Модалка: присоединение игрока ═══════════════════════════ -->
-    <div class="modal" id="joinModal">
-        <div class="modal-content">
-            <h2>Присоединение к гонке</h2>
-            <p style="color:var(--text-dim);margin-bottom:1rem;font-size:0.9rem;">
-                Ты войдёшь как <strong id="joinAsUser"></strong>
-            </p>
-            <div class="modal-actions">
-                <button class="btn btn-secondary" onclick="closeJoinModal()">Отмена</button>
-                <button class="btn btn-primary"   onclick="joinRace()">Присоединиться</button>
-            </div>
-        </div>
-    </div>
-
+    <script src="theme.js"></script>
     <script src="config.js"></script>
     <script src="app.js"></script>
+    <script src="router.js"></script>
 </body>
 </html>

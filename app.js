@@ -48,34 +48,41 @@ function showToast(message, type = 'success') {
 function updateAuthUI() {
     const userInfo = document.getElementById('userInfo');
     const authBtn  = document.getElementById('authBtn');
+    const createRaceBtn = document.getElementById('createRaceBtn');
+
+    // Кнопка "Создать гонку" в шапке — только для залогиненных
+    if (createRaceBtn) createRaceBtn.style.display = currentUser ? '' : 'none';
 
     if (currentUser) {
-        userInfo.style.display = 'flex';
-        authBtn.style.display = 'none';
+        if (userInfo) userInfo.style.display = 'flex';
+        if (authBtn)  authBtn.style.display = 'none';
 
-        document.getElementById('userNameDisplay').textContent = currentUser.username;
-        
+        const nameEl = document.getElementById('userNameDisplay');
+        if (nameEl) nameEl.textContent = currentUser.username;
+
         const roleBadge = document.getElementById('userRoleDisplay');
-        
+
         let roleText = 'ИГРОК';
-        let roleColor = 'rgba(0,255,136,0.2);color:#00ff88';
-        
+        let roleColor = 'background:var(--primary-soft);color:var(--primary)';
+
         if (currentUser.role === 'master-host') {
             roleText = 'MASTER';
-            roleColor = 'rgba(255,71,87,0.25);color:#ff4757';
+            roleColor = 'background:rgba(224,80,63,0.18);color:#e0503f';
         } else if (currentUser.role === 'host') {
             roleText = 'ХОСТ';
-            roleColor = 'rgba(255,217,61,0.2);color:#ffd93d';
+            roleColor = 'background:rgba(232,168,48,0.18);color:#e8a830';
         }
-        
-        roleBadge.textContent = roleText;
-        roleBadge.style.cssText = `background:${roleColor};padding:2px 8px;border-radius:4px;font-size:0.75rem;margin-left:6px;`;
+
+        if (roleBadge) {
+            roleBadge.textContent = roleText;
+            roleBadge.style.cssText = `${roleColor};padding:3px 9px;border-radius:999px;font-size:0.7rem;font-weight:900;letter-spacing:.5px;`;
+        }
 
         // Обновляем глобальную переменную
         window.isMasterHost = currentUser.role === 'master-host';
     } else {
-        userInfo.style.display = 'none';
-        authBtn.style.display = '';
+        if (userInfo) userInfo.style.display = 'none';
+        if (authBtn)  authBtn.style.display = '';
         window.isMasterHost = false;
     }
 }
@@ -270,8 +277,6 @@ function showRaceList() {
     document.getElementById('raceScreen').style.display     = 'none';
     currentRaceId      = null;
     autoStartTriggered = false;
-    stopTimer();
-    stopCountdown();
     if (realtimeChannel) { db.removeChannel(realtimeChannel); realtimeChannel = null; }
     loadRaceList();
 }
@@ -313,15 +318,8 @@ async function loadRaceList() {
 
         if (error) throw error;
 
-        // Кнопка "Создать гонку" видна всем авторизованным пользователям
-        const createBtn = currentUser
-            ? `<button class="btn btn-primary" onclick="showCreateRace()" style="margin-bottom:1.5rem">
-                 + Создать гонку
-               </button>`
-            : '';
-
         if (!races || races.length === 0) {
-            container.innerHTML = createBtn + `
+            container.innerHTML = `
                 <div class="empty-state">
                     <h3>🏁 Нет активных гонок</h3>
                     <p>Ожидайте, пока организатор создаст гонку</p>
@@ -329,20 +327,13 @@ async function loadRaceList() {
             return;
         }
 
-        container.innerHTML = createBtn + races.map(race => `
-            <div class="race-list-card" onclick="showRaceScreen('${race.id}')">
-                <div class="race-list-info">
-                    <span class="race-list-game">${race.game || 'Unknown Game'}</span>
-                    <span class="race-list-category">${race.category || '---'}</span>
-                    <span class="race-list-name">${race.name || race.id}</span>
-                </div>
-                <div class="race-list-right">
-                    <span class="status-badge ${race.status}">
-                        <span class="status-dot"></span>
-                        <span>${statusLabel(race.status)}</span>
-                    </span>
-                    <span class="race-list-arrow">→</span>
-                </div>
+        container.innerHTML = races.map(race => `
+            <div class="race-card" onclick="location.hash='#race/${race.id}'">
+                <h3>${race.name || race.id}</h3>
+                <div class="meta">${race.game} — ${race.category}</div>
+                <span class="status ${race.status}">
+                    ${statusLabel(race.status)}
+                </span>
             </div>
         `).join('');
 
@@ -390,6 +381,10 @@ async function loadRaceData() {
                 
                 // Показываем панель только если есть права
                 document.getElementById('hostPanel').style.display = canManageCurrentRace ? '' : 'none';
+                
+                // Кнопка удаления гонки — только для master-host
+                const deleteBtn = document.getElementById('hostDeleteBtn');
+                if (deleteBtn) deleteBtn.style.display = currentUser.role === 'master-host' ? '' : 'none';
             }
         }
     } catch (err) { console.error(err); }
@@ -638,101 +633,6 @@ function formatDelta(ms) {
 }
 
 // ============================================================
-// ТАЙМЕРЫ
-// ============================================================
-
-// Таймер убран по просьбе пользователя (оставляем функции для совместимости)
-function startTimer() {}
-function stopTimer() {}
-
-// Обратный отсчёт убран по просьбе пользователя
-function startCountdown() {}
-function stopCountdown() {}
-
-// ============================================================
-// ПРИСОЕДИНЕНИЕ К ГОНКЕ
-// ============================================================
-
-function showJoinModal() {
-    if (!currentUser) {
-        showAuthModal();
-        return;
-    }
-    
-    document.getElementById('joinModal').classList.add('active');
-    document.getElementById('joinAsUser').textContent = currentUser.username;
-}
-
-function closeJoinModal() {
-    document.getElementById('joinModal').classList.remove('active');
-}
-
-async function joinRace() {
-    if (!currentUser) {
-        alert('Сначала войдите в аккаунт');
-        return;
-    }
-    if (!currentRaceId) { alert('Сначала выберите гонку'); return; }
-
-    currentPlayerId   = currentUser.id;
-    currentPlayerName = currentUser.username;
-
-        const { error } = await db.from('players').upsert({
-        id: currentPlayerId, 
-        race_id: currentRaceId,
-        name: currentPlayerName, 
-        status: 'joined',
-        current_split: 0, 
-        total_time: 0,
-        splits: {}, 
-        split_names: {}, 
-        split_count: 0
-    }, { onConflict: 'id' });
-
-    // Создаём запись в ready со значением false
-    if (error) { 
-        alert('Ошибка: ' + error.message); 
-        return; 
-    }
-
-    await db.from('ready').upsert(
-        { race_id: currentRaceId, player_id: currentPlayerId, ready: false },
-        { onConflict: 'race_id,player_id' }
-    );
-
-    isReady = true;
-    closeJoinModal();
-    await loadPlayers();
-    
-    showToast('Вы присоединились к гонке!');
-}
-
-// ============================================================
-// ГОТОВНОСТЬ
-// ============================================================
-
-async function toggleReady() {
-    if (!currentPlayerId) { 
-        showJoinModal(); 
-        return; 
-    }
-    isReady = !isReady;
-    
-    // Обновляем таблицу ready
-    await db.from('ready').upsert(
-        { race_id: currentRaceId, player_id: currentPlayerId, ready: isReady },
-        { onConflict: 'race_id,player_id' }
-    );
-    
-    // Обновляем статус в players
-    await db.from('players').update({
-        status: isReady ? 'ready' : 'joined'
-    }).eq('id', currentPlayerId);
-    
-    await loadPlayers();
-}
-
-// ============================================================
 // REALTIME
 // ============================================================
 
@@ -787,7 +687,7 @@ function closeCreateRace() {
     });
 }
 
-async function submitCreateRace() {
+async function createRace() {
     if (!currentUser) return;
     
     const id       = document.getElementById('newRaceId').value.trim();
@@ -908,6 +808,37 @@ async function hostKickPlayer(playerId, event) {
     await loadPlayers();
 }
 
+// ═══ УДАЛЕНИЕ ГОНКИ (только master-host) ═══
+async function hostDeleteRace() {
+    if (!currentRaceId || currentUser?.role !== 'master-host') {
+        console.warn('[hostDeleteRace] Отказ: нет прав или не выбран ID гонки', { currentRaceId, role: currentUser?.role });
+        return;
+    }
+    if (!confirm('🗑️ Удалить гонку полностью? Это удалит всех участников и результаты. Отменить нельзя.')) return;
+
+    console.log('[hostDeleteRace] Удаляем гонку:', currentRaceId);
+
+    try {
+        const { data, error } = await db.rpc('delete_race', {
+            race_id_input: currentRaceId,
+            user_id_input: currentUser.id
+        });
+
+        if (error) throw new Error(error.message);
+
+        if (!data.success) {
+            throw new Error(data.error || 'Неизвестная ошибка');
+        }
+
+        console.log('[hostDeleteRace] Успешно удалено');
+        showToast('Гонка удалена');
+        location.hash = '#races';
+    } catch (err) {
+        console.error('[hostDeleteRace] Ошибка:', err);
+        alert('Ошибка удаления: ' + err.message);
+    }
+}
+
 // ═══ НОВАЯ ФУНКЦИЯ: Показать результаты гонки ═══
 async function showRaceResults() {
     const container = document.getElementById('raceResultsContainer');
@@ -954,31 +885,28 @@ async function showRaceResults() {
     }
 }
 
-// ═══ Функция финиша (оставляем для совместимости) ═══
-function finishMyRun() {
-    alert('Финиш можно зафиксировать только через LiveSplit компонент');
-}
-
 // ============================================================
 // ИНИЦИАЛИЗАЦИЯ
 // ============================================================
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Загружаем пользователя из localStorage
     loadUserFromStorage();
+    updateAuthUI(); // гарантированно скрыть/показать кнопки в зависимости от входа
+
+    // Загружаем все секции
+    loadRaceList();
+    loadActivePlayers();
     
-    showRaceList();
-    
+    // Автообновление
     setInterval(() => {
-        if (!currentRaceId) loadRaceList();
-        else loadRaceData();
-    }, 5000);
+        if (!currentRaceId) {
+            loadRaceList();
+            loadActivePlayers();
+        }
+    }, 15000);
 });
 
 // Закрытие модалок по клику вне
-document.getElementById('joinModal').addEventListener('click', e => {
-    if (e.target.id === 'joinModal') closeJoinModal();
-});
 document.getElementById('authModal').addEventListener('click', e => {
     if (e.target.id === 'authModal') closeAuthModal();
 });
@@ -998,3 +926,48 @@ document.getElementById('regPassword').addEventListener('keypress', e => {
 const s = document.createElement('style');
 s.textContent = `.current-player { border: 2px solid var(--primary) !important; box-shadow: 0 0 20px rgba(0,255,136,0.3); }`;
 document.head.appendChild(s);
+
+// === АКТИВНЫЕ ИГРОКИ ===
+async function loadActivePlayers() {
+    const container = document.getElementById('activePlayersContainer');
+    if (!container) return;
+
+    try {
+        const { data: players } = await db
+            .from('players')
+            .select('name, status, total_time')
+            .in('status', ['racing', 'ready', 'joined'])
+            .order('total_time', { ascending: true })
+            .limit(12);
+
+        if (!players || players.length === 0) {
+            container.innerHTML = `<div class="empty-state"><p>Пока нет активных игроков</p></div>`;
+            return;
+        }
+
+        container.innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>Игрок</th>
+                        <th>Статус</th>
+                        <th>Время</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${players.map(p => `
+                        <tr>
+                            <td><strong>${p.name}</strong></td>
+                            <td><span class="status ${p.status}">${getStatusLabel(p.status)}</span></td>
+                            <td>${p.total_time > 0 ? formatTime(p.total_time) : '—'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = `<div class="empty-state"><p>Ошибка загрузки</p></div>`;
+    }
+}
