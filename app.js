@@ -223,6 +223,9 @@ async function registerUser() {
 
         showToast(tr('toast.registerSuccess'));
 
+        // Обновляем счётчик зарегистрированных пользователей на главной.
+        loadUserCount();
+
         if (currentRaceId) {
             document.getElementById('hostPanel').style.display = 'none';
         } else {
@@ -1146,6 +1149,22 @@ window.refreshCurrentViewTranslations = function () {
 // ИНИЦИАЛИЗАЦИЯ
 // ============================================================
 
+// Количество зарегистрированных пользователей на титульном экране.
+async function loadUserCount() {
+    const el = document.getElementById('statUserCount');
+    if (!el) return;
+    try {
+        const { count, error } = await db
+            .from('users')
+            .select('*', { count: 'exact', head: true });
+        if (error) throw error;
+        if (typeof count === 'number') el.textContent = count;
+    } catch (err) {
+        console.error('Не удалось загрузить число пользователей:', err);
+        // Оставляем прежнее значение (∞), если запрос не удался.
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     loadUserFromStorage();
     updateAuthUI(); // гарантированно скрыть/показать кнопки в зависимости от входа
@@ -1153,12 +1172,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Загружаем все секции
     loadRaceList();
     loadActivePlayers();
-    
+    loadUserCount();
+
     // Автообновление
     setInterval(() => {
         if (!currentRaceId) {
             loadRaceList();
             loadActivePlayers();
+            loadUserCount();
         }
     }, 15000);
 });
