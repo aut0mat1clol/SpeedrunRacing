@@ -9,7 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800;900&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23131a10' width='100' height='100' rx='22'/><path d='M22 72 L50 26 L78 72' stroke='%236aad38' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
-    <script>(function(){var t=localStorage.getItem('srt-theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
+    <script>(function(){var t=localStorage.getItem('srt-theme')||'dark';document.documentElement.setAttribute('data-theme',t);var l=localStorage.getItem('srt-lang')||'ru';document.documentElement.setAttribute('lang',l);})();</script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -19,19 +19,20 @@
         <div class="nav-inner">
             <a href="#home" class="nav-brand">SpeedRun Tracker</a>
             <div class="nav-right">
-                <a href="#races" data-nav="races">Гонки</a>
-                <a href="#active" data-nav="active">Активные</a>
-                <a href="#howto" data-nav="howto">Как подключиться</a>
+                <a href="#races" data-nav="races" data-i18n="nav.races">Гонки</a>
+                <a href="#active" data-nav="active" data-i18n="nav.active">Активные</a>
+                <a href="#howto" data-nav="howto" data-i18n="nav.howto">Как подключиться</a>
                 <div id="userInfo" class="user-info" style="display:none;">
                     <span class="user-name" id="userNameDisplay"></span>
                     <span class="user-role" id="userRoleDisplay"></span>
-                    <button class="btn btn-ghost" onclick="logoutUser()">Выйти</button>
+                    <button class="btn btn-ghost" onclick="logoutUser()" data-i18n="nav.logout">Выйти</button>
                 </div>
-                <button class="btn btn-ghost" id="authBtn" onclick="showAuthModal()">Войти</button>
-                <button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему" aria-label="Сменить тему">
+                <button class="btn btn-ghost" id="authBtn" onclick="showAuthModal()" data-i18n="nav.login">Войти</button>
+                <button class="theme-toggle" onclick="toggleTheme()" title="Сменить тему" aria-label="Сменить тему" data-i18n-title="theme.title">
                     <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
                     <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
+                <button class="lang-toggle" id="languageToggle" onclick="toggleLanguage()" title="Switch language" aria-label="Switch language" data-i18n-title="lang.title">RU</button>
             </div>
         </div>
     </nav>
@@ -41,20 +42,20 @@
         <header class="main-header">
             <div class="header-content">
                 <h1>SpeedRun Race Tracker</h1>
-                <p class="subtitle">Соревновательные гонки в реальном времени</p>
+                <p class="subtitle" data-i18n="home.subtitle">Соревновательные гонки в реальном времени</p>
                 <div class="header-stats">
-                    <div class="stat"><div class="stat-value">⚡</div><div class="stat-label">Live‑таймер</div></div>
-                    <div class="stat"><div class="stat-value">🏁</div><div class="stat-label">Сплиты</div></div>
-                    <div class="stat"><div class="stat-value">∞</div><div class="stat-label">Игроков</div></div>
+                    <div class="stat"><div class="stat-value">⚡</div><div class="stat-label" data-i18n="home.stat.timer">Live‑таймер</div></div>
+                    <div class="stat"><div class="stat-value">🏁</div><div class="stat-label" data-i18n="home.stat.splits">Сплиты</div></div>
+                    <div class="stat"><div class="stat-value">∞</div><div class="stat-label" data-i18n="home.stat.players">Игроков</div></div>
                 </div>
                 <div style="margin-top:2.25rem;">
-                    <a href="#races" class="btn btn-primary" style="font-size:1.05rem;padding:14px 30px;">Посмотреть гонки →</a>
+                    <a href="#races" class="btn btn-primary" style="font-size:1.05rem;padding:14px 30px;" data-i18n="home.cta">Посмотреть гонки →</a>
                 </div>
             </div>
         </header>
         <main class="main-content container" style="text-align:center;">
-            <h2 style="margin-bottom:1rem;font-size:1.7rem;">Добро пожаловать!</h2>
-            <p style="max-width:620px;margin:0 auto;">
+            <h2 style="margin-bottom:1rem;font-size:1.7rem;" data-i18n="home.welcome">Добро пожаловать!</h2>
+            <p style="max-width:620px;margin:0 auto;" data-i18n="home.text">
                 Здесь ты можешь создавать и участвовать в соревновательных гонках по спидрану.<br>
                 Всё происходит в реальном времени через LiveSplit.
             </p>
@@ -70,11 +71,11 @@
         <!-- id raceListScreen нужен app.js -->
         <div class="container" id="raceListScreen">
             <div class="section-header">
-                <h1 style="margin:0;">Все гонки</h1>
-                <button class="btn btn-primary" id="createRaceBtn" onclick="showCreateRace()" style="display:none;">+ Создать гонку</button>
+                <h1 style="margin:0;" data-i18n="races.title">Все гонки</h1>
+                <button class="btn btn-primary" id="createRaceBtn" onclick="showCreateRace()" style="display:none;" data-i18n="races.create">+ Создать гонку</button>
             </div>
             <div id="raceListContainer">
-                <p class="loading-text">Загрузка гонок…</p>
+                <p class="loading-text" data-i18n="races.loading">Загрузка гонок…</p>
             </div>
         </div>
     </section>
@@ -83,7 +84,7 @@
     <section class="page" id="page-race" hidden>
         <!-- id raceScreen нужен app.js -->
         <div class="container" id="raceScreen">
-            <p style="margin-bottom:1rem;"><a href="#races" class="btn btn-ghost btn-back">← Назад к гонкам</a></p>
+            <p style="margin-bottom:1rem;"><a href="#races" class="btn btn-ghost btn-back" data-i18n="race.back">← Назад к гонкам</a></p>
 
             <div class="race-header">
                 <div>
@@ -97,50 +98,50 @@
             </div>
 
             <div id="hostPanel" style="display:none;">
-                <h3>Панель организатора</h3>
-                <button class="btn btn-primary btn-host-start" onclick="hostStartRace()">▶ Старт гонки</button>
-                <button class="btn btn-danger btn-host-finish" onclick="hostFinishRace()">🏁 Завершить</button>
+                <h3 data-i18n="race.hostPanel">Панель организатора</h3>
+                <button class="btn btn-primary btn-host-start" onclick="hostStartRace()" data-i18n="race.start">▶ Старт гонки</button>
+                <button class="btn btn-danger btn-host-finish" onclick="hostFinishRace()" data-i18n="race.finish">🏁 Завершить</button>
                 <label style="display:flex;align-items:center;gap:8px;font-weight:700;color:var(--text-dim);">
-                    Обратный отсчёт:
+                    <span data-i18n="race.countdown">Обратный отсчёт:</span>
                     <select id="countdownSelect" class="modal-input" style="width:auto;margin:0;padding:8px 12px;">
-                        <option value="5">5 сек</option>
-                        <option value="10" selected>10 сек</option>
-                        <option value="15">15 сек</option>
-                        <option value="30">30 сек</option>
+                        <option value="5" data-i18n="race.countdown.5">5 сек</option>
+                        <option value="10" selected data-i18n="race.countdown.10">10 сек</option>
+                        <option value="15" data-i18n="race.countdown.15">15 сек</option>
+                        <option value="30" data-i18n="race.countdown.30">30 сек</option>
                     </select>
                 </label>
-                <button class="btn btn-danger btn-host-delete" id="hostDeleteBtn" onclick="hostDeleteRace()" style="display:none;margin-left:auto;">🗑️ Удалить гонку</button>
+                <button class="btn btn-danger btn-host-delete" id="hostDeleteBtn" onclick="hostDeleteRace()" style="display:none;margin-left:auto;" data-i18n="race.delete">🗑️ Удалить гонку</button>
             </div>
 
             <div class="ready-count">
-                <h3>Готовность участников</h3>
+                <h3 data-i18n="race.readyTitle">Готовность участников</h3>
                 <div class="ready-bar"><div class="ready-bar-fill" id="readyBarFill" style="width:0%"></div></div>
-                <p class="ready-text">Готовы: <span id="readyCount">0</span> / <span id="totalPlayers">0</span></p>
+                <p class="ready-text"><span data-i18n="race.readyText">Готовы:</span> <span id="readyCount">0</span> / <span id="totalPlayers">0</span></p>
             </div>
 
             <div id="raceResults" style="display:none;">
-                <div class="section-header"><h2>Результаты</h2></div>
+                <div class="section-header"><h2 data-i18n="race.results">Результаты</h2></div>
                 <div id="raceResultsContainer"></div>
             </div>
 
             <div class="section-header">
-                <h2>Участники</h2>
+                <h2 data-i18n="race.players">Участники</h2>
             </div>
 
             <div id="playersGrid" class="players-grid">
-                <p class="loading-text">Загрузка участников…</p>
+                <p class="loading-text" data-i18n="race.playersLoading">Загрузка участников…</p>
             </div>
 
-            <p class="last-updated" id="lastUpdated">Обновлено: —</p>
+            <p class="last-updated" id="lastUpdated" data-i18n="race.updatedDash">Обновлено: —</p>
         </div>
     </section>
 
     <!-- ===================== ACTIVE ===================== -->
     <section class="page" id="page-active" hidden>
         <div class="container">
-            <h1>Активные игроки</h1>
+            <h1 data-i18n="active.title">Активные игроки</h1>
             <div id="activePlayersContainer">
-                <p class="loading-text">Загрузка игроков…</p>
+                <p class="loading-text" data-i18n="active.loading">Загрузка игроков…</p>
             </div>
         </div>
     </section>
@@ -148,22 +149,22 @@
     <!-- ===================== HOWTO ===================== -->
     <section class="page" id="page-howto" hidden>
         <div class="container">
-            <h1>Как подключиться к гонке</h1>
+            <h1 data-i18n="howto.title">Как подключиться к гонке</h1>
             <div class="howto-list">
                 <a class="howto-item howto-download" href="Component/SpeedrunRaceComponent.dll" download="SpeedrunRaceComponent.dll">
                     <div class="howto-number">01</div>
                     <div>
-                        <strong>Установи компонент</strong><br>
-                        <span>Добавь SpeedRun Race Tracker в LiveSplit</span>
+                        <strong data-i18n="howto.install.title">Установи компонент</strong><br>
+                        <span data-i18n="howto.install.text">Добавь SpeedRun Race Tracker в LiveSplit</span>
                         <span class="download-badge">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
-                            Скачать .dll
+                            <span data-i18n="howto.download">Скачать .dll</span>
                         </span>
                     </div>
                 </a>
-                <div class="howto-item"><div class="howto-number">02</div><div><strong>Зарегистрируйся</strong><br><span>Создай аккаунт на этом сайте</span></div></div>
-                <div class="howto-item"><div class="howto-number">03</div><div><strong>Авторизуйся в LiveSplit</strong><br><span>Введи логин и пароль в настройках компонента</span></div></div>
-                <div class="howto-item"><div class="howto-number">04</div><div><strong>Подключись к гонке</strong><br><span>Введи ID гонки и нажми «Подключиться»</span></div></div>
+                <div class="howto-item"><div class="howto-number">02</div><div><strong data-i18n="howto.register.title">Зарегистрируйся</strong><br><span data-i18n="howto.register.text">Создай аккаунт на этом сайте</span></div></div>
+                <div class="howto-item"><div class="howto-number">03</div><div><strong data-i18n="howto.auth.title">Авторизуйся в LiveSplit</strong><br><span data-i18n="howto.auth.text">Введи логин и пароль в настройках компонента</span></div></div>
+                <div class="howto-item"><div class="howto-number">04</div><div><strong data-i18n="howto.join.title">Подключись к гонке</strong><br><span data-i18n="howto.join.text">Введи ID гонки и нажми «Подключиться»</span></div></div>
             </div>
         </div>
     </section>
@@ -171,31 +172,31 @@
     <!-- ===================== SHARED MODALS ===================== -->
     <div class="modal" id="authModal">
         <div class="modal-content">
-            <h2>Авторизация</h2>
+            <h2 data-i18n="auth.title">Авторизация</h2>
             <div class="auth-tabs">
-                <button class="btn btn-primary" id="loginTab" onclick="switchAuthTab('login')">Вход</button>
-                <button class="btn btn-secondary" id="registerTab" onclick="switchAuthTab('register')">Регистрация</button>
+                <button class="btn btn-primary" id="loginTab" onclick="switchAuthTab('login')" data-i18n="auth.loginTab">Вход</button>
+                <button class="btn btn-secondary" id="registerTab" onclick="switchAuthTab('register')" data-i18n="auth.registerTab">Регистрация</button>
             </div>
             <div id="loginForm">
                 <div id="loginError" class="modal-error"></div>
-                <label for="loginUsername">Логин</label>
-                <input class="modal-input" id="loginUsername" placeholder="Введите логин" autocomplete="username">
-                <label for="loginPassword">Пароль</label>
-                <input class="modal-input" id="loginPassword" type="password" placeholder="Введите пароль" autocomplete="current-password">
+                <label for="loginUsername" data-i18n="auth.username">Логин</label>
+                <input class="modal-input" id="loginUsername" placeholder="Введите логин" data-i18n-placeholder="auth.loginPlaceholder" autocomplete="username">
+                <label for="loginPassword" data-i18n="auth.password">Пароль</label>
+                <input class="modal-input" id="loginPassword" type="password" placeholder="Введите пароль" data-i18n-placeholder="auth.passwordPlaceholder" autocomplete="current-password">
                 <div class="modal-actions">
-                    <button class="btn btn-ghost" onclick="closeAuthModal()">Отмена</button>
-                    <button class="btn btn-primary" onclick="loginUser()">Войти</button>
+                    <button class="btn btn-ghost" onclick="closeAuthModal()" data-i18n="auth.cancel">Отмена</button>
+                    <button class="btn btn-primary" onclick="loginUser()" data-i18n="auth.login">Войти</button>
                 </div>
             </div>
             <div id="registerForm" style="display:none;">
                 <div id="registerError" class="modal-error"></div>
-                <label for="regUsername">Логин</label>
-                <input class="modal-input" id="regUsername" placeholder="Придумайте логин" autocomplete="username">
-                <label for="regPassword">Пароль</label>
-                <input class="modal-input" id="regPassword" type="password" placeholder="Придумайте пароль" autocomplete="new-password">
+                <label for="regUsername" data-i18n="auth.username">Логин</label>
+                <input class="modal-input" id="regUsername" placeholder="Придумайте логин" data-i18n-placeholder="auth.regUsernamePlaceholder" autocomplete="username">
+                <label for="regPassword" data-i18n="auth.password">Пароль</label>
+                <input class="modal-input" id="regPassword" type="password" placeholder="Придумайте пароль" data-i18n-placeholder="auth.regPasswordPlaceholder" autocomplete="new-password">
                 <div class="modal-actions">
-                    <button class="btn btn-ghost" onclick="closeAuthModal()">Отмена</button>
-                    <button class="btn btn-primary" onclick="registerUser()">Создать аккаунт</button>
+                    <button class="btn btn-ghost" onclick="closeAuthModal()" data-i18n="auth.cancel">Отмена</button>
+                    <button class="btn btn-primary" onclick="registerUser()" data-i18n="auth.createAccount">Создать аккаунт</button>
                 </div>
             </div>
         </div>
@@ -203,23 +204,24 @@
 
 <div class="modal" id="createRaceModal">
         <div class="modal-content">
-            <h2>Создать гонку</h2>
-            <label for="newRaceId">ID гонки</label>
-            <input class="modal-input" id="newRaceId" placeholder="например: any-percent-1">
-            <label for="newRaceName">Название</label>
-            <input class="modal-input" id="newRaceName" placeholder="Название гонки">
-            <label for="newRaceGame">Игра</label>
-            <input class="modal-input" id="newRaceGame" placeholder="Название игры">
-            <label for="newRaceCategory">Категория</label>
-            <input class="modal-input" id="newRaceCategory" placeholder="например: Any%">
+            <h2 data-i18n="create.title">Создать гонку</h2>
+            <label for="newRaceId" data-i18n="create.id">ID гонки</label>
+            <input class="modal-input" id="newRaceId" placeholder="например: any-percent-1" data-i18n-placeholder="create.idPlaceholder">
+            <label for="newRaceName" data-i18n="create.name">Название</label>
+            <input class="modal-input" id="newRaceName" placeholder="Название гонки" data-i18n-placeholder="create.namePlaceholder">
+            <label for="newRaceGame" data-i18n="create.game">Игра</label>
+            <input class="modal-input" id="newRaceGame" placeholder="Название игры" data-i18n-placeholder="create.gamePlaceholder">
+            <label for="newRaceCategory" data-i18n="create.category">Категория</label>
+            <input class="modal-input" id="newRaceCategory" placeholder="например: Any%" data-i18n-placeholder="create.categoryPlaceholder">
             <div class="modal-actions">
-                <button class="btn btn-ghost" onclick="closeCreateRace()">Отмена</button>
-                <button class="btn btn-primary" onclick="createRace()">Создать</button>
+                <button class="btn btn-ghost" onclick="closeCreateRace()" data-i18n="auth.cancel">Отмена</button>
+                <button class="btn btn-primary" onclick="createRace()" data-i18n="create.submit">Создать</button>
             </div>
         </div>
     </div>
 
     <script src="theme.js"></script>
+    <script src="i18n.js"></script>
     <script src="config.js"></script>
     <script src="app.js"></script>
     <script src="router.js"></script>

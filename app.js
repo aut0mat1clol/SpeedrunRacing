@@ -27,6 +27,10 @@ let canManageCurrentRace = false; // может ли текущий пользо
 // УТИЛИТЫ
 // ============================================================
 
+function tr(key, vars) {
+    return (typeof window.t === 'function') ? window.t(key, vars) : key;
+}
+
 function showToast(message, type = 'success') {
     const toast = document.createElement('div');
     toast.style.cssText = `
@@ -62,14 +66,14 @@ function updateAuthUI() {
 
         const roleBadge = document.getElementById('userRoleDisplay');
 
-        let roleText = 'ИГРОК';
+        let roleText = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'PLAYER' : 'ИГРОК';
         let roleColor = 'background:var(--primary-soft);color:var(--primary)';
 
         if (currentUser.role === 'master-host') {
             roleText = 'MASTER';
             roleColor = 'background:rgba(224,80,63,0.18);color:#e0503f';
         } else if (currentUser.role === 'host') {
-            roleText = 'ХОСТ';
+            roleText = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'HOST' : 'ХОСТ';
             roleColor = 'background:rgba(232,168,48,0.18);color:#e8a830';
         }
 
@@ -118,7 +122,7 @@ function logoutUser() {
         showRaceList();
     }
     
-    showToast('Вы вышли из аккаунта');
+    showToast(tr('toast.loggedOut'));
 }
 
 async function loginUser() {
@@ -127,7 +131,7 @@ async function loginUser() {
     const errorEl  = document.getElementById('loginError');
 
     if (!username || !password) {
-        errorEl.textContent = 'Введите имя и пароль';
+        errorEl.textContent = tr('auth.err.required');
         errorEl.style.display = 'block';
         return;
     }
@@ -141,7 +145,7 @@ async function loginUser() {
             .single();
 
         if (error || !data) {
-            errorEl.textContent = 'Неверное имя или пароль';
+            errorEl.textContent = tr('auth.err.invalid');
             errorEl.style.display = 'block';
             return;
         }
@@ -156,7 +160,7 @@ async function loginUser() {
         updateAuthUI();
         closeAuthModal();
         
-        showToast(`Добро пожаловать, ${currentUser.username}!`);
+        showToast(tr('toast.welcome', { name: currentUser.username }));
 
         // Обновляем список гонок / текущий экран
         if (currentRaceId) {
@@ -167,7 +171,7 @@ async function loginUser() {
         }
 
     } catch (err) {
-        errorEl.textContent = 'Ошибка входа';
+        errorEl.textContent = tr('auth.err.login');
         errorEl.style.display = 'block';
         console.error(err);
     }
@@ -179,13 +183,13 @@ async function registerUser() {
     const errorEl  = document.getElementById('registerError');
 
     if (!username || !password) {
-        errorEl.textContent = 'Имя и пароль обязательны';
+        errorEl.textContent = tr('auth.err.requiredRegister');
         errorEl.style.display = 'block';
         return;
     }
 
     if (username.length < 3) {
-        errorEl.textContent = 'Имя должно быть минимум 3 символа';
+        errorEl.textContent = tr('auth.err.usernameShort');
         errorEl.style.display = 'block';
         return;
     }
@@ -203,9 +207,9 @@ async function registerUser() {
 
         if (error) {
             if (error.code === '23505') { // unique constraint
-                errorEl.textContent = 'Пользователь с таким именем уже существует';
+                errorEl.textContent = tr('auth.err.userExists');
             } else {
-                errorEl.textContent = 'Ошибка регистрации: ' + error.message;
+                errorEl.textContent = tr('auth.err.registerPrefix') + error.message;
             }
             errorEl.style.display = 'block';
             return;
@@ -217,7 +221,7 @@ async function registerUser() {
         updateAuthUI();
         closeAuthModal();
 
-        showToast('Регистрация успешна!');
+        showToast(tr('toast.registerSuccess'));
 
         if (currentRaceId) {
             document.getElementById('hostPanel').style.display = 'none';
@@ -226,7 +230,7 @@ async function registerUser() {
         }
 
     } catch (err) {
-        errorEl.textContent = 'Ошибка регистрации';
+        errorEl.textContent = tr('auth.err.register');
         errorEl.style.display = 'block';
         console.error(err);
     }
@@ -307,7 +311,7 @@ function showRaceScreen(raceId) {
 
 async function loadRaceList() {
     const container = document.getElementById('raceListContainer');
-    container.innerHTML = '<p class="loading-text">⏳ Загрузка гонок...</p>';
+    container.innerHTML = `<p class="loading-text">⏳ ${tr('races.loading')}</p>`;
 
     try {
         const { data: races, error } = await db
@@ -321,8 +325,8 @@ async function loadRaceList() {
         if (!races || races.length === 0) {
             container.innerHTML = `
                 <div class="empty-state">
-                    <h3>🏁 Нет активных гонок</h3>
-                    <p>Ожидайте, пока организатор создаст гонку</p>
+                    <h3>${tr('empty.noRaces.title')}</h3>
+                    <p>${tr('empty.noRaces.text')}</p>
                 </div>`;
             return;
         }
@@ -339,20 +343,20 @@ async function loadRaceList() {
 
     } catch (err) {
         console.error(err);
-        container.innerHTML = `<div class="empty-state"><h3>⚠️ Ошибка подключения</h3><p>${err.message}</p></div>`;
+        container.innerHTML = `<div class="empty-state"><h3>⚠️ ${tr('common.loadingError')}</h3><p>${err.message}</p></div>`;
     }
 }
 
 function statusLabel(s) {
-    return { waiting: 'Ожидание', active: 'Идёт гонка', finished: 'Завершена' }[s] || s;
+    return { waiting: tr('status.waiting'), active: tr('status.active'), finished: tr('status.finished') }[s] || s;
 }
 
 function getStatusLabel(status) {
     return { 
-        joined: '⏳ Присоединился', 
-        ready: '✓ Готов', 
-        racing: '🏃 В гонке', 
-        finished: '🏁 Финиш' 
+        joined: tr('player.joined'), 
+        ready: tr('player.ready'), 
+        racing: tr('player.racing'), 
+        finished: tr('player.finished') 
     }[status] || (status || '—');
 }
 
@@ -446,7 +450,7 @@ async function loadPlayers() {
         updatePlayersGrid(players, readyMap);
         updateReadyCount(players.length, players.filter(p => readyMap[p.id]).length);
         document.getElementById('lastUpdated').textContent =
-            'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
+            tr('common.updated') + ' ' + new Date().toLocaleTimeString((typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU');
 
         // Живой топ: показываем по мере финиша участников.
         showRaceResults();
@@ -604,7 +608,7 @@ function updatePlayersGrid(players, readyMap) {
     const grid = document.getElementById('playersGrid');
 
     if (players.length === 0) {
-        grid.innerHTML = '<div class="empty-state"><h3>👥 Нет участников</h3><p>Присоединяйтесь первым!</p></div>';
+        grid.innerHTML = `<div class="empty-state"><h3>${tr('empty.noPlayers.title')}</h3><p>${tr('empty.noPlayers.text')}</p></div>`;
         stopLiveTimer();
         return;
     }
@@ -640,14 +644,14 @@ function updatePlayersGrid(players, readyMap) {
         const splitCount = p.split_count || Object.keys(splits).length || 0;
 
         const kickBtn = canManageCurrentRace && !isMe
-            ? `<button class="btn-kick" onclick="hostKickPlayer('${p.id}', event)" title="Удалить игрока">✕</button>`
+            ? `<button class="btn-kick" onclick="hostKickPlayer('${p.id}', event)" title="${tr('common.kickTitle')}">✕</button>`
             : '';
 
         let splitsHtml = '';
         for (let i = 0; i < splitCount; i++) {
             const key       = String(i);
             let   t         = splits[key];
-            const label     = names[key] || ('Split ' + (i + 1));
+            const label     = names[key] || (tr('split.default') + ' ' + (i + 1));
             const isLast    = i === splitCount - 1;
 
             // Финальный сплит = время финиша забега. Компонент при финише
@@ -708,7 +712,7 @@ function updatePlayersGrid(players, readyMap) {
             <div class="player-header">
                 <div class="player-name">
                     ${p.name}
-                    ${isMe ? '<em>(вы)</em>' : ''}
+                    ${isMe ? `<em>${tr('common.you')}</em>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
                     ${kickBtn}
@@ -728,7 +732,7 @@ function updatePlayersGrid(players, readyMap) {
 
             ${p.status === 'racing' && isMe ? `
                 <div style="margin-top:0.5rem;font-size:0.8rem;color:var(--text-dim);text-align:center;">
-                    Финиш фиксируется в LiveSplit
+                    ${tr('player.finishInLiveSplit')}
                 </div>
             ` : ''}
         </div>`;
@@ -827,7 +831,7 @@ function setupRealtimeListeners() {
 
 function showCreateRace() {
     if (!currentUser) {
-        alert('Сначала войдите в аккаунт');
+        alert(tr('alert.loginFirst'));
         showAuthModal();
         return;
     }
@@ -864,7 +868,7 @@ async function createRace() {
     const game     = document.getElementById('newRaceGame').value.trim();
     const category = document.getElementById('newRaceCategory').value.trim();
 
-    if (!id || !game) { alert('ID гонки и название игры обязательны'); return; }
+    if (!id || !game) { alert(tr('alert.requiredRace')); return; }
 
     const { error } = await db.from('races').insert({
         id,
@@ -875,7 +879,7 @@ async function createRace() {
         created_by: currentUser.id   // ← сохраняем владельца
     });
 
-    if (error) { alert('Ошибка: ' + error.message); return; }
+    if (error) { alert(tr('alert.error') + error.message); return; }
 
     closeCreateRace();
     loadRaceList();
@@ -925,7 +929,7 @@ function showAutoStartNotice() {
     const panel = document.getElementById('hostPanel');
     if (!panel) return;
     const notice = document.createElement('span');
-    notice.textContent = '🟢 Все готовы — авто-старт через 5 сек!';
+    notice.textContent = tr('autostart.notice');
     notice.style.cssText = 'color:var(--primary);font-family:JetBrains Mono,monospace;font-size:0.85rem;font-weight:600;';
     notice.id = 'autoStartNotice';
     const old = document.getElementById('autoStartNotice');
@@ -942,7 +946,7 @@ async function hostStartRace() {
     if (!currentRaceId || !canManageCurrentRace) return;
 
     const delaySec = parseInt(document.getElementById('countdownSelect').value) || 10;
-    if (!confirm('Запустить гонку? Отсчёт: ' + delaySec + ' сек.')) return;
+    if (!confirm(tr('confirm.startRace', { seconds: delaySec }))) return;
 
     const startAt = new Date(Date.now() + delaySec * 1000).toISOString();
 
@@ -950,13 +954,13 @@ async function hostStartRace() {
         .update({ status: 'active', started_at: startAt })
         .eq('id', currentRaceId);
 
-    if (error) alert('Ошибка: ' + error.message);
+    if (error) alert(tr('alert.error') + error.message);
     else await loadRaceData();
 }
 
 async function hostFinishRace() {
     if (!currentRaceId || !canManageCurrentRace) return;
-    if (!confirm('Завершить гонку? Не финишировавшие попадут в топ как DNF. Гонка исчезнет из списка активных.')) return;
+    if (!confirm(tr('confirm.finishRace'))) return;
 
     // Сначала фиксируем снимок топа (отстающие → DNF), затем закрываем гонку.
     await finalizeRaceResults();
@@ -965,14 +969,14 @@ async function hostFinishRace() {
         .update({ status: 'finished' })
         .eq('id', currentRaceId);
 
-    if (error) alert('Ошибка: ' + error.message);
+    if (error) alert(tr('alert.error') + error.message);
     else await loadRaceData();
 }
 
 async function hostKickPlayer(playerId, event) {
     event.stopPropagation();
     if (!canManageCurrentRace) return;
-    if (!confirm('Удалить игрока из гонки?')) return;
+    if (!confirm(tr('confirm.kickPlayer'))) return;
 
     await db.from('ready').delete()
         .eq('race_id', currentRaceId).eq('player_id', playerId);
@@ -986,7 +990,7 @@ async function hostDeleteRace() {
         console.warn('[hostDeleteRace] Отказ: нет прав или не выбран ID гонки', { currentRaceId, role: currentUser?.role });
         return;
     }
-    if (!confirm('🗑️ Удалить гонку полностью? Это удалит всех участников и результаты. Отменить нельзя.')) return;
+    if (!confirm(tr('confirm.deleteRace'))) return;
 
     console.log('[hostDeleteRace] Удаляем гонку:', currentRaceId);
 
@@ -1003,11 +1007,11 @@ async function hostDeleteRace() {
         }
 
         console.log('[hostDeleteRace] Успешно удалено');
-        showToast('Гонка удалена');
+        showToast(tr('toast.raceDeleted'));
         location.hash = '#races';
     } catch (err) {
         console.error('[hostDeleteRace] Ошибка:', err);
-        alert('Ошибка удаления: ' + err.message);
+        alert(tr('alert.deleteError') + err.message);
     }
 }
 
@@ -1085,10 +1089,10 @@ function renderResultsHtml(rows, opts = {}) {
 
     let header = '';
     if (finalized) {
-        header = `<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.6rem;">🏁 Итоговый топ гонки</div>`;
+        header = `<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.6rem;">${tr('results.final')}</div>`;
     } else {
         header = `<div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:0.6rem;">
-            ⏳ Финишировали: ${finishedCount} из ${totalCount} — топ обновляется по мере финиша
+            ${tr('results.live', { finished: finishedCount, total: totalCount })}
         </div>`;
     }
 
@@ -1118,6 +1122,25 @@ function renderResultsHtml(rows, opts = {}) {
     html += '</div>';
     return html;
 }
+
+// ============================================================
+// ОБНОВЛЕНИЕ ДИНАМИЧЕСКИХ ТЕКСТОВ ПРИ СМЕНЕ ЯЗЫКА
+// ============================================================
+
+window.refreshCurrentViewTranslations = function () {
+    updateAuthUI();
+
+    // Если открыта гонка — обновляем её данные/участников/топ.
+    if (currentRaceId) {
+        loadRaceData();
+        loadPlayers();
+        return;
+    }
+
+    // Иначе обновляем видимую SPA-страницу.
+    if (!document.getElementById('page-races')?.hidden) loadRaceList();
+    if (!document.getElementById('page-active')?.hidden) loadActivePlayers();
+};
 
 // ============================================================
 // ИНИЦИАЛИЗАЦИЯ
@@ -1175,7 +1198,7 @@ async function loadActivePlayers() {
             .limit(12);
 
         if (!players || players.length === 0) {
-            container.innerHTML = `<div class="empty-state"><p>Пока нет активных игроков</p></div>`;
+            container.innerHTML = `<div class="empty-state"><p>${tr('empty.noActivePlayers')}</p></div>`;
             return;
         }
 
@@ -1183,9 +1206,9 @@ async function loadActivePlayers() {
             <table>
                 <thead>
                     <tr>
-                        <th>Игрок</th>
-                        <th>Статус</th>
-                        <th>Время</th>
+                        <th>${tr('common.player')}</th>
+                        <th>${tr('common.status')}</th>
+                        <th>${tr('common.time')}</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1202,6 +1225,6 @@ async function loadActivePlayers() {
 
     } catch (err) {
         console.error(err);
-        container.innerHTML = `<div class="empty-state"><p>Ошибка загрузки</p></div>`;
+        container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
     }
 }

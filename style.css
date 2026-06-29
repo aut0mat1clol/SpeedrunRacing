@@ -259,16 +259,6 @@ a { color: inherit; }
 .stat-value { font-size: 2.2rem; font-weight: 900; color: var(--primary); }
 .stat-label { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
 
-.site-footer {
-    max-width: 1120px;
-    margin: 24px auto;
-    padding: 20px;
-    color: var(--text-dim);
-    font-size: 13px;
-    font-weight: 700;
-    text-align: center;
-}
-
 /* ============================================================
    LAYOUT
    ============================================================ */
@@ -913,4 +903,55 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
 @media (max-width: 480px) {
     .nav-brand { font-size: 1rem; }
     .player-time { font-size: 1.6rem; }
+}
+
+/* ============================================================
+   FOOTER
+   Подвал домашней страницы — по стилю как на Amnyam GEG
+   ============================================================ */
+.site-footer {
+    max-width: 1120px;
+    margin: 24px auto;
+    padding: 20px;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+}
+.site-footer a {
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 900;
+}
+.site-footer a:hover {
+    text-decoration: underline;
+}
+.home-footer {
+    margin-top: 8px;
+}
+
+/* Language toggle */
+.lang-toggle {
+    min-width: 40px;
+    height: 40px;
+    padding: 0 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family: JetBrains Mono, monospace;
+    font-size: .82rem;
+    font-weight: 900;
+    letter-spacing: .4px;
+    transition: transform .2s, background .2s, border-color .2s;
+    flex-shrink: 0;
+}
+.lang-toggle:hover {
+    transform: scale(1.08);
+    border-color: var(--primary);
+    color: var(--primary);
 }
