@@ -1256,6 +1256,22 @@ function renderPlayerCards(users, counts) {
         }).join('') + '</div>';
 }
 
+// Защита от автозаполнения браузером: если в поле поиска что-то
+// «само» появилось до того, как пользователь начал печатать — очищаем.
+let playerSearchTouched = false;
+document.addEventListener('DOMContentLoaded', () => {
+    const input = document.getElementById('playerSearchInput');
+    if (!input) return;
+    input.addEventListener('keydown', () => { playerSearchTouched = true; });
+    input.addEventListener('paste',   () => { playerSearchTouched = true; });
+    // Проверяем несколько раз: Chrome подставляет значение с задержкой
+    [100, 400, 1000].forEach(ms => setTimeout(() => {
+        if (!playerSearchTouched && input.value) {
+            input.value = '';
+        }
+    }, ms));
+});
+
 // До 10 случайных игроков — чтобы страница не была пустой
 async function loadRandomPlayers() {
     const container = document.getElementById('playerSearchResults');
