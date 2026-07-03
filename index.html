@@ -151,12 +151,11 @@
     <section class="page" id="page-players" hidden>
         <div class="container">
             <h1 data-i18n="players.title">Поиск игроков</h1>
-            <input class="modal-input" id="playerSearchInput" type="search" name="player-search-query"
+            <textarea class="modal-input" id="playerSearchInput" rows="1"
                    placeholder="Введите ник…" data-i18n-placeholder="players.placeholder"
                    oninput="onPlayerSearchInput()" autocomplete="off" autocorrect="off"
-                   autocapitalize="off" spellcheck="false" style="max-width:420px;"
-                   readonly onfocus="this.removeAttribute('readonly')"
-                   ontouchstart="this.removeAttribute('readonly')">
+                   autocapitalize="off" spellcheck="false"
+                   style="max-width:420px;resize:none;overflow:hidden;white-space:nowrap;"></textarea>
             <div id="playerSearchResults" style="margin-top:1.25rem;">
                 <div class="empty-state"><p data-i18n="players.hint">Введите минимум 2 символа для поиска</p></div>
             </div>

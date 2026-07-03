@@ -1271,23 +1271,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('playerSearchInput');
     if (!input) return;
 
-    // Рандомизируем name: браузер не сможет сопоставить полю
-    // сохранённое значение (восстановление формы при F5 / автозаполнение).
-    input.setAttribute('name', 'q_' + Math.random().toString(36).slice(2));
-
-    input.addEventListener('keydown', () => { playerSearchTouched = true; });
-    input.addEventListener('paste',   () => { playerSearchTouched = true; });
+    input.addEventListener('keydown', (e) => {
+        // Поле поиска — однострочный textarea: Enter не должен добавлять перенос
+        if (e.key === 'Enter') { e.preventDefault(); searchPlayers(); return; }
+        playerSearchTouched = true;
+    });
+    input.addEventListener('paste', () => { playerSearchTouched = true; });
 
     // Если значение появилось БЕЗ участия пользователя (автозаполнение
     // или восстановление формы) — событие input придёт, когда touched=false.
     input.addEventListener('input', () => {
+        // Вычищаем переносы строк на случай вставки многострочного текста
+        if (input.value.includes('\n')) {
+            input.value = input.value.replace(/\n+/g, ' ').trim();
+        }
         if (!playerSearchTouched && input.value) {
             input.value = '';
         }
     });
 
-    // Chrome подставляет значение с задержкой и может повторять это
-    // несколько раз — проверяем каждые 250 мс первые 3 секунды.
+    // Страховка: проверяем каждые 250 мс первые 3 секунды после загрузки.
     let checks = 0;
     const iv = setInterval(() => {
         clearAutofilledSearch();
