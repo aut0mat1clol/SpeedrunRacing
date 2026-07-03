@@ -154,7 +154,9 @@
             <input class="modal-input" id="playerSearchInput" type="search" name="player-search-query"
                    placeholder="Введите ник…" data-i18n-placeholder="players.placeholder"
                    oninput="onPlayerSearchInput()" autocomplete="off" autocorrect="off"
-                   autocapitalize="off" spellcheck="false" style="max-width:420px;">
+                   autocapitalize="off" spellcheck="false" style="max-width:420px;"
+                   readonly onfocus="this.removeAttribute('readonly')"
+                   ontouchstart="this.removeAttribute('readonly')">
             <div id="playerSearchResults" style="margin-top:1.25rem;">
                 <div class="empty-state"><p data-i18n="players.hint">Введите минимум 2 символа для поиска</p></div>
             </div>

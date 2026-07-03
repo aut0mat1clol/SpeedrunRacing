@@ -1259,17 +1259,26 @@ function renderPlayerCards(users, counts) {
 // Защита от автозаполнения браузером: если в поле поиска что-то
 // «само» появилось до того, как пользователь начал печатать — очищаем.
 let playerSearchTouched = false;
+
+function clearAutofilledSearch() {
+    const input = document.getElementById('playerSearchInput');
+    if (input && !playerSearchTouched && input.value) {
+        input.value = '';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('playerSearchInput');
     if (!input) return;
     input.addEventListener('keydown', () => { playerSearchTouched = true; });
     input.addEventListener('paste',   () => { playerSearchTouched = true; });
-    // Проверяем несколько раз: Chrome подставляет значение с задержкой
-    [100, 400, 1000].forEach(ms => setTimeout(() => {
-        if (!playerSearchTouched && input.value) {
-            input.value = '';
-        }
-    }, ms));
+    // Chrome подставляет значение с задержкой и может повторять это
+    // несколько раз — проверяем каждые 250 мс первые 3 секунды.
+    let checks = 0;
+    const iv = setInterval(() => {
+        clearAutofilledSearch();
+        if (++checks >= 12) clearInterval(iv);
+    }, 250);
 });
 
 // До 10 случайных игроков — чтобы страница не была пустой
@@ -1315,6 +1324,9 @@ async function searchPlayers() {
     const input = document.getElementById('playerSearchInput');
     const container = document.getElementById('playerSearchResults');
     if (!input || !container) return;
+
+    // Если значение появилось не от пользователя (автозаполнение) — сбрасываем
+    clearAutofilledSearch();
 
     const query = input.value.trim();
     if (query.length < 2) {
