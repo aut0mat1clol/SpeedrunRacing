@@ -1270,8 +1270,22 @@ function clearAutofilledSearch() {
 document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('playerSearchInput');
     if (!input) return;
+
+    // Рандомизируем name: браузер не сможет сопоставить полю
+    // сохранённое значение (восстановление формы при F5 / автозаполнение).
+    input.setAttribute('name', 'q_' + Math.random().toString(36).slice(2));
+
     input.addEventListener('keydown', () => { playerSearchTouched = true; });
     input.addEventListener('paste',   () => { playerSearchTouched = true; });
+
+    // Если значение появилось БЕЗ участия пользователя (автозаполнение
+    // или восстановление формы) — событие input придёт, когда touched=false.
+    input.addEventListener('input', () => {
+        if (!playerSearchTouched && input.value) {
+            input.value = '';
+        }
+    });
+
     // Chrome подставляет значение с задержкой и может повторять это
     // несколько раз — проверяем каждые 250 мс первые 3 секунды.
     let checks = 0;
@@ -1279,6 +1293,16 @@ document.addEventListener('DOMContentLoaded', () => {
         clearAutofilledSearch();
         if (++checks >= 12) clearInterval(iv);
     }, 250);
+});
+
+// pageshow срабатывает и при обычной загрузке, и при возврате из bfcache
+// (кнопка «назад»), и после перезагрузки — когда браузер уже восстановил
+// значения форм. Самое надёжное место для очистки.
+window.addEventListener('pageshow', () => {
+    playerSearchTouched = false;
+    clearAutofilledSearch();
+    setTimeout(clearAutofilledSearch, 50);
+    setTimeout(clearAutofilledSearch, 300);
 });
 
 // До 10 случайных игроков — чтобы страница не была пустой
