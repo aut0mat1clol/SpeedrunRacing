@@ -21,9 +21,10 @@
             <div class="nav-right">
                 <a href="#races" data-nav="races" data-i18n="nav.races">Гонки</a>
                 <a href="#history" data-nav="history" data-i18n="nav.history">История</a>
+                <a href="#players" data-nav="players" data-i18n="nav.players">Игроки</a>
                 <a href="#howto" data-nav="howto" data-i18n="nav.howto">Как подключиться</a>
                 <div id="userInfo" class="user-info" style="display:none;">
-                    <span class="user-name" id="userNameDisplay"></span>
+                    <span class="user-name" id="userNameDisplay" style="cursor:pointer;" title="Мой профиль" onclick="if(window.currentUserProfileLink)location.hash=window.currentUserProfileLink"></span>
                     <span class="user-role" id="userRoleDisplay"></span>
                     <button class="btn btn-ghost" onclick="logoutUser()" data-i18n="nav.logout">Выйти</button>
                 </div>
@@ -146,6 +147,29 @@
         </div>
     </section>
 
+    <!-- ===================== PLAYERS (поиск) ===================== -->
+    <section class="page" id="page-players" hidden>
+        <div class="container">
+            <h1 data-i18n="players.title">Поиск игроков</h1>
+            <input class="modal-input" id="playerSearchInput" placeholder="Введите ник…"
+                   data-i18n-placeholder="players.placeholder" oninput="onPlayerSearchInput()"
+                   autocomplete="off" style="max-width:420px;">
+            <div id="playerSearchResults" style="margin-top:1.25rem;">
+                <div class="empty-state"><p data-i18n="players.hint">Введите минимум 2 символа для поиска</p></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ===================== PROFILE ===================== -->
+    <section class="page" id="page-profile" hidden>
+        <div class="container">
+            <p style="margin-bottom:1rem;"><a href="#players" class="btn btn-ghost btn-back" data-i18n="profile.back">← Назад к поиску</a></p>
+            <div id="profileContainer">
+                <p class="loading-text" data-i18n="profile.loading">Загрузка профиля…</p>
+            </div>
+        </div>
+    </section>
+
     <!-- ===================== HOWTO ===================== -->
     <section class="page" id="page-howto" hidden>
         <div class="container">
@@ -219,8 +243,8 @@
                 <button class="btn btn-primary" onclick="createRace()" data-i18n="create.submit">Создать</button>
             </div>
         </div>
-    </div> 
-        
+    </div>
+
     <script src="theme.js"></script>
     <script src="i18n.js"></script>
     <script src="config.js"></script>

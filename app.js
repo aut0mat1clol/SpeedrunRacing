@@ -63,6 +63,7 @@ function updateAuthUI() {
 
         const nameEl = document.getElementById('userNameDisplay');
         if (nameEl) nameEl.textContent = currentUser.username;
+        window.currentUserProfileLink = '#profile/' + encodeURIComponent(currentUser.username);
 
         const roleBadge = document.getElementById('userRoleDisplay');
 
@@ -1143,6 +1144,10 @@ window.refreshCurrentViewTranslations = function () {
     // Иначе обновляем видимую SPA-страницу.
     if (!document.getElementById('page-races')?.hidden) loadRaceList();
     if (!document.getElementById('page-history')?.hidden) loadRaceHistory();
+    if (!document.getElementById('page-players')?.hidden) searchPlayers();
+    if (!document.getElementById('page-profile')?.hidden && currentProfileUsername) {
+        loadPlayerProfile(currentProfileUsername);
+    }
 };
 
 // ============================================================
@@ -1204,6 +1209,249 @@ document.getElementById('regPassword').addEventListener('keypress', e => {
 const s = document.createElement('style');
 s.textContent = `.current-player { border: 2px solid var(--primary) !important; box-shadow: 0 0 20px rgba(0,255,136,0.3); }`;
 document.head.appendChild(s);
+
+// === ПОИСК ИГРОКОВ ===
+let playerSearchTimeout = null;
+
+function onPlayerSearchInput() {
+    clearTimeout(playerSearchTimeout);
+    playerSearchTimeout = setTimeout(searchPlayers, 300); // debounce 300 мс
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+// Количество завершённых гонок для списка ников: { ник: число }
+async function fetchRaceCounts(usernames) {
+    const counts = {};
+    if (!usernames || usernames.length === 0) return counts;
+    try {
+        const { data } = await db
+            .from('race_results')
+            .select('player_name')
+            .in('player_name', usernames);
+        (data || []).forEach(r => {
+            counts[r.player_name] = (counts[r.player_name] || 0) + 1;
+        });
+    } catch (e) { /* счётчики необязательны */ }
+    return counts;
+}
+
+// Отрисовка карточек игроков (общая для поиска и случайного списка)
+function renderPlayerCards(users, counts) {
+    return '<div style="display:flex;flex-direction:column;gap:0.5rem;">' +
+        users.map(u => {
+            const name = escapeHtml(u.username);
+            const roleBadge = u.role === 'master-host' ? ' <span style="font-size:0.65rem;color:#e0503f;font-weight:900;">MASTER</span>'
+                : u.role === 'host' ? ' <span style="font-size:0.65rem;color:#e8a830;font-weight:900;">HOST</span>' : '';
+            const n = counts[u.username] || 0;
+            return `
+                <div class="race-card" onclick="location.hash='#profile/${encodeURIComponent(u.username)}'" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                    <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
+                    <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-dim);font-size:0.85rem;white-space:nowrap;" title="${tr('players.racesTitle')}">🏁 ${n}</span>
+                </div>`;
+        }).join('') + '</div>';
+}
+
+// До 10 случайных игроков — чтобы страница не была пустой
+async function loadRandomPlayers() {
+    const container = document.getElementById('playerSearchResults');
+    if (!container) return;
+
+    container.innerHTML = `<p class="loading-text">⏳ ${tr('players.searching')}</p>`;
+
+    try {
+        const { data: users, error } = await db
+            .from('users')
+            .select('username, role')
+            .limit(100);
+
+        if (error) throw error;
+
+        if (!users || users.length === 0) {
+            container.innerHTML = `<div class="empty-state"><p>${tr('players.notFound')}</p></div>`;
+            return;
+        }
+
+        // Перемешиваем на клиенте (Fisher–Yates) и берём 10
+        for (let i = users.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [users[i], users[j]] = [users[j], users[i]];
+        }
+        const picked = users.slice(0, 10);
+
+        const counts = await fetchRaceCounts(picked.map(u => u.username));
+
+        container.innerHTML =
+            `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${tr('players.random')}</p>` +
+            renderPlayerCards(picked, counts);
+
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
+    }
+}
+
+async function searchPlayers() {
+    const input = document.getElementById('playerSearchInput');
+    const container = document.getElementById('playerSearchResults');
+    if (!input || !container) return;
+
+    const query = input.value.trim();
+    if (query.length < 2) {
+        loadRandomPlayers();
+        return;
+    }
+
+    container.innerHTML = `<p class="loading-text">⏳ ${tr('players.searching')}</p>`;
+
+    try {
+        // Экранируем спецсимволы ilike-шаблона
+        const safe = query.replace(/[%_\\]/g, '\\$&');
+        const { data: users, error } = await db
+            .from('users')
+            .select('username, role')
+            .ilike('username', `%${safe}%`)
+            .order('username')
+            .limit(20);
+
+        if (error) throw error;
+
+        if (!users || users.length === 0) {
+            container.innerHTML = `<div class="empty-state"><p>${tr('players.notFound')}</p></div>`;
+            return;
+        }
+
+        const counts = await fetchRaceCounts(users.map(u => u.username));
+        container.innerHTML = renderPlayerCards(users, counts);
+
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
+    }
+}
+
+// === ПРОФИЛЬ ИГРОКА ===
+let currentProfileUsername = null; // чей профиль сейчас открыт (для смены языка)
+
+async function loadPlayerProfile(username) {
+    const container = document.getElementById('profileContainer');
+    if (!container) return;
+
+    currentProfileUsername = username;
+
+    container.innerHTML = `<p class="loading-text">⏳ ${tr('profile.loading')}</p>`;
+
+    try {
+        // 1) Пользователь (точное совпадение ника без учёта регистра)
+        const { data: user, error: userErr } = await db
+            .from('users')
+            .select('username, role')
+            .ilike('username', username.replace(/[%_\\]/g, '\\$&'))
+            .limit(1)
+            .maybeSingle();
+
+        if (userErr) throw userErr;
+        if (!user) {
+            container.innerHTML = `<div class="empty-state"><h3>${tr('profile.notFound')}</h3></div>`;
+            return;
+        }
+
+        // 2) Все результаты игрока из снимков завершённых гонок
+        const { data: results } = await db
+            .from('race_results')
+            .select('race_id, place, total_time, is_dnf, timing_method')
+            .eq('player_name', user.username)
+            .order('place', { ascending: true });
+
+        const rows = results || [];
+
+        // 3) Инфо о гонках для этих результатов
+        let racesById = {};
+        if (rows.length > 0) {
+            const { data: races } = await db
+                .from('races')
+                .select('id, name, game, category, started_at')
+                .in('id', [...new Set(rows.map(r => r.race_id))]);
+            (races || []).forEach(r => { racesById[r.id] = r; });
+        }
+
+        // Статистика
+        const finished = rows.filter(r => !r.is_dnf);
+        const wins     = finished.filter(r => r.place === 1).length;
+        const podiums  = finished.filter(r => r.place <= 3).length;
+        const dnfs     = rows.length - finished.length;
+
+        const roleText = user.role === 'master-host' ? 'MASTER'
+            : user.role === 'host' ? 'HOST' : tr('profile.rolePlayer');
+        const roleColor = user.role === 'master-host' ? '#e0503f'
+            : user.role === 'host' ? '#e8a830' : 'var(--primary)';
+
+        const statCard = (value, label) => `
+            <div style="background:var(--surface-hover);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px 20px;text-align:center;min-width:110px;">
+                <div style="font-size:1.5rem;font-weight:900;font-family:JetBrains Mono,monospace;color:var(--primary);">${value}</div>
+                <div style="font-size:0.75rem;color:var(--text-dim);font-weight:700;margin-top:4px;">${label}</div>
+            </div>`;
+
+        let html = `
+            <div class="race-header" style="margin-bottom:1.5rem;">
+                <div>
+                    <h1 style="margin:0;">${escapeHtml(user.username)}</h1>
+                    <p style="margin:6px 0 0;"><span style="color:${roleColor};font-weight:900;font-size:0.8rem;letter-spacing:.5px;">${roleText}</span></p>
+                </div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:2rem;">
+                ${statCard(rows.length, tr('profile.stat.races'))}
+                ${statCard('🥇 ' + wins, tr('profile.stat.wins'))}
+                ${statCard('🏆 ' + podiums, tr('profile.stat.podiums'))}
+                ${statCard(dnfs, 'DNF')}
+            </div>
+            <div class="section-header"><h2>${tr('profile.recentRaces')}</h2></div>`;
+
+        if (rows.length === 0) {
+            html += `<div class="empty-state"><p>${tr('profile.noRaces')}</p></div>`;
+        } else {
+            // Сортируем по дате гонки (свежие сверху), максимум 20
+            const sorted = [...rows].sort((a, b) => {
+                const da = racesById[a.race_id]?.started_at || '';
+                const db_ = racesById[b.race_id]?.started_at || '';
+                return db_.localeCompare(da);
+            }).slice(0, 20);
+
+            const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
+
+            html += '<div style="display:flex;flex-direction:column;gap:0.5rem;">' + sorted.map(r => {
+                const race = racesById[r.race_id];
+                const medal = r.is_dnf ? 'DNF' : r.place === 1 ? '🥇' : r.place === 2 ? '🥈' : r.place === 3 ? '🥉' : `#${r.place}`;
+                const time = r.is_dnf ? '—' : formatTime(r.total_time);
+                const raceName = race ? escapeHtml(race.name || race.id) : r.race_id;
+                const raceMeta = race ? `${escapeHtml(race.game)} — ${escapeHtml(race.category)}` : '';
+                const date = race?.started_at ? new Date(race.started_at).toLocaleDateString(lang) : '';
+                return `
+                    <div style="background:var(--surface-hover);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;${r.is_dnf ? 'opacity:0.55;' : ''}"
+                         onclick="location.hash='#race/${r.race_id}'">
+                        <div style="display:flex;align-items:center;gap:12px;min-width:0;">
+                            <span style="font-size:1.2rem;min-width:2.2rem;text-align:center;font-weight:700;">${medal}</span>
+                            <div style="min-width:0;">
+                                <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${raceName}</div>
+                                <div style="font-size:0.75rem;color:var(--text-dim);">${raceMeta}${date ? ' · ' + date : ''}</div>
+                            </div>
+                        </div>
+                        <div style="font-family:JetBrains Mono,monospace;font-size:1rem;color:var(--primary);font-weight:700;white-space:nowrap;">${time}</div>
+                    </div>`;
+            }).join('') + '</div>';
+        }
+
+        container.innerHTML = html;
+
+    } catch (err) {
+        console.error(err);
+        container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
+    }
+}
 
 // === ИСТОРИЯ ГОНОК ===
 async function loadRaceHistory() {

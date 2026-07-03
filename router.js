@@ -5,13 +5,15 @@
 //   #races   — список гонок
 //   #race/ID — конкретная гонка
 //   #history — история завершённых гонок
+//   #players — поиск игроков по нику
+//   #profile/НИК — профиль игрока
 //   #howto   — как подключиться
 // Логика данных живёт в app.js; роутер только показывает нужную
 // секцию и вызывает соответствующий загрузчик.
 // ============================================================
 
 (function () {
-    var PAGES = ['home', 'races', 'race', 'history', 'howto'];
+    var PAGES = ['home', 'races', 'race', 'history', 'players', 'profile', 'howto'];
 
     function showPage(name) {
         PAGES.forEach(function (p) {
@@ -33,6 +35,13 @@
 
         // имя секции = всё до первого '/' или '?'
         var name = raw.split(/[\/?]/)[0];
+
+        // поддержка #profile/НИК
+        if (name === 'profile') {
+            var pslash = raw.indexOf('/');
+            var pid = pslash !== -1 ? decodeURIComponent(raw.slice(pslash + 1)) : null;
+            return { name: 'profile', id: pid };
+        }
 
         // поддержка #race/ID  и  #race?id=ID
         if (name === 'race') {
@@ -73,6 +82,18 @@
             case 'history':
                 showPage('history');
                 if (typeof loadRaceHistory === 'function') loadRaceHistory();
+                break;
+
+            case 'players':
+                showPage('players');
+                // показать результаты поиска или случайных игроков
+                if (typeof searchPlayers === 'function') searchPlayers();
+                break;
+
+            case 'profile':
+                if (!r.id) { location.hash = '#players'; return; }
+                showPage('profile');
+                if (typeof loadPlayerProfile === 'function') loadPlayerProfile(r.id);
                 break;
 
             case 'howto':
