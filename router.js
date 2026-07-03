@@ -4,14 +4,14 @@
 //   #home    — главная
 //   #races   — список гонок
 //   #race/ID — конкретная гонка
-//   #active  — активные игроки
+//   #history — история завершённых гонок
 //   #howto   — как подключиться
 // Логика данных живёт в app.js; роутер только показывает нужную
 // секцию и вызывает соответствующий загрузчик.
 // ============================================================
 
 (function () {
-    var PAGES = ['home', 'races', 'race', 'active', 'howto'];
+    var PAGES = ['home', 'races', 'race', 'history', 'howto'];
 
     function showPage(name) {
         PAGES.forEach(function (p) {
@@ -47,6 +47,9 @@
             return { name: 'race', id: id };
         }
 
+        // старый раздел «Активные» теперь «История»
+        if (name === 'active') name = 'history';
+
         if (PAGES.indexOf(name) === -1) name = 'home';
         return { name: name, id: null };
     }
@@ -67,9 +70,9 @@
                 if (typeof showRaceScreen === 'function') showRaceScreen(r.id);
                 break;
 
-            case 'active':
-                showPage('active');
-                if (typeof loadActivePlayers === 'function') loadActivePlayers();
+            case 'history':
+                showPage('history');
+                if (typeof loadRaceHistory === 'function') loadRaceHistory();
                 break;
 
             case 'howto':
@@ -89,10 +92,10 @@
         }
     }
 
-    // Поддержка старых ссылок вида races.html / active.html / race.html?id=…
+    // Поддержка старых ссылок вида races.html / history.html / race.html?id=…
     function migrateLegacyPath() {
         var path = location.pathname.toLowerCase();
-        var map = { 'races.html': '#races', 'active.html': '#active', 'howto.html': '#howto' };
+        var map = { 'races.html': '#races', 'active.html': '#history', 'history.html': '#history', 'howto.html': '#howto' };
         for (var file in map) {
             if (path.indexOf(file) !== -1) { location.replace('index.html' + map[file]); return true; }
         }

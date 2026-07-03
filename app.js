@@ -1142,7 +1142,7 @@ window.refreshCurrentViewTranslations = function () {
 
     // Иначе обновляем видимую SPA-страницу.
     if (!document.getElementById('page-races')?.hidden) loadRaceList();
-    if (!document.getElementById('page-active')?.hidden) loadActivePlayers();
+    if (!document.getElementById('page-history')?.hidden) loadRaceHistory();
 };
 
 // ============================================================
@@ -1171,14 +1171,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Загружаем все секции
     loadRaceList();
-    loadActivePlayers();
+    loadRaceHistory();
     loadUserCount();
 
     // Автообновление
     setInterval(() => {
         if (!currentRaceId) {
             loadRaceList();
-            loadActivePlayers();
+            loadRaceHistory();
             loadUserCount();
         }
     }, 15000);
@@ -1205,44 +1205,61 @@ const s = document.createElement('style');
 s.textContent = `.current-player { border: 2px solid var(--primary) !important; box-shadow: 0 0 20px rgba(0,255,136,0.3); }`;
 document.head.appendChild(s);
 
-// === АКТИВНЫЕ ИГРОКИ ===
-async function loadActivePlayers() {
-    const container = document.getElementById('activePlayersContainer');
+// === ИСТОРИЯ ГОНОК ===
+async function loadRaceHistory() {
+    const container = document.getElementById('raceHistoryContainer');
     if (!container) return;
 
     try {
-        const { data: players } = await db
-            .from('players')
-            .select('name, status, total_time')
-            .in('status', ['racing', 'ready', 'joined'])
-            .order('total_time', { ascending: true })
-            .limit(12);
+        // Завершённые гонки, последние — сверху.
+        const { data: races, error } = await db
+            .from('races')
+            .select('*')
+            .eq('status', 'finished')
+            .order('started_at', { ascending: false })
+            .limit(30);
 
-        if (!players || players.length === 0) {
-            container.innerHTML = `<div class="empty-state"><p>${tr('empty.noActivePlayers')}</p></div>`;
+        if (error) throw error;
+
+        if (!races || races.length === 0) {
+            container.innerHTML = `<div class="empty-state"><p>${tr('empty.noHistory')}</p></div>`;
             return;
         }
 
-        container.innerHTML = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>${tr('common.player')}</th>
-                        <th>${tr('common.status')}</th>
-                        <th>${tr('common.time')}</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${players.map(p => `
-                        <tr>
-                            <td><strong>${p.name}</strong></td>
-                            <td><span class="status ${p.status}">${getStatusLabel(p.status)}</span></td>
-                            <td>${p.total_time > 0 ? formatTime(p.total_time) : '—'}</td>
-                        </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        `;
+        // Подтягиваем победителей из снимков результатов (place = 1).
+        const winners = {};
+        try {
+            const { data: results } = await db
+                .from('race_results')
+                .select('race_id, player_name, total_time, is_dnf, place')
+                .in('race_id', races.map(r => r.id))
+                .eq('place', 1);
+            (results || []).forEach(r => {
+                if (!r.is_dnf) winners[r.race_id] = r;
+            });
+        } catch (e) { /* победители необязательны */ }
+
+        const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
+
+        container.innerHTML = races.map(race => {
+            const w = winners[race.id];
+            const winnerHtml = w
+                ? `<div class="meta">🥇 ${w.player_name} — <span style="font-family:JetBrains Mono,monospace;color:var(--primary);font-weight:700;">${formatTime(w.total_time)}</span></div>`
+                : `<div class="meta">${tr('history.noWinner')}</div>`;
+            const dateHtml = race.started_at
+                ? `<div class="meta">📅 ${new Date(race.started_at).toLocaleString(lang)}</div>`
+                : '';
+
+            return `
+                <div class="race-card" onclick="location.hash='#race/${race.id}'">
+                    <h3>${race.name || race.id}</h3>
+                    <div class="meta">${race.game} — ${race.category}</div>
+                    ${winnerHtml}
+                    ${dateHtml}
+                    <span class="status ${race.status}">${statusLabel(race.status)}</span>
+                </div>
+            `;
+        }).join('');
 
     } catch (err) {
         console.error(err);

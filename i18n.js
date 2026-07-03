@@ -9,7 +9,7 @@
     const dict = {
         ru: {
             'nav.races': 'Гонки',
-            'nav.active': 'Активные',
+            'nav.history': 'История',
             'nav.howto': 'Как подключиться',
             'nav.login': 'Войти',
             'nav.logout': 'Выйти',
@@ -46,8 +46,9 @@
             'race.playersLoading': 'Загрузка участников…',
             'race.updatedDash': 'Обновлено: —',
 
-            'active.title': 'Активные игроки',
-            'active.loading': 'Загрузка игроков…',
+            'history.title': 'История гонок',
+            'history.loading': 'Загрузка истории…',
+            'history.noWinner': 'Победитель не зафиксирован',
 
             'howto.title': 'Как подключиться к гонке',
             'howto.install.title': 'Установи компонент',
@@ -96,7 +97,7 @@
             'empty.noPlayers.text': 'Присоединяйтесь первым!',
             'empty.noRaces.title': '🏁 Нет активных гонок',
             'empty.noRaces.text': 'Ожидайте, пока организатор создаст гонку',
-            'empty.noActivePlayers': 'Пока нет активных игроков',
+            'empty.noHistory': 'Завершённых гонок пока нет',
             'common.updated': 'Обновлено:',
             'common.loadingError': 'Ошибка загрузки',
             'common.player': 'Игрок',
@@ -111,7 +112,7 @@
             'autostart.notice': '🟢 Все готовы — авто-старт через 5 сек!',
 
             'confirm.startRace': 'Запустить гонку? Отсчёт: {seconds} сек.',
-            'confirm.finishRace': 'Завершить гонку? Не финишировавшие попадут в топ как DNF. Гонка исчезнет из списка активных.',
+            'confirm.finishRace': 'Завершить гонку? Не финишировавшие попадут в топ как DNF. Гонка переместится в раздел «История».',
             'confirm.kickPlayer': 'Удалить игрока из гонки?',
             'confirm.deleteRace': '🗑️ Удалить гонку полностью? Это удалит всех участников и результаты. Отменить нельзя.',
             'alert.loginFirst': 'Сначала войдите в аккаунт',
@@ -133,7 +134,7 @@
         },
         en: {
             'nav.races': 'Races',
-            'nav.active': 'Active',
+            'nav.history': 'History',
             'nav.howto': 'How to connect',
             'nav.login': 'Log in',
             'nav.logout': 'Log out',
@@ -170,8 +171,9 @@
             'race.playersLoading': 'Loading participants…',
             'race.updatedDash': 'Updated: —',
 
-            'active.title': 'Active players',
-            'active.loading': 'Loading players…',
+            'history.title': 'Race history',
+            'history.loading': 'Loading history…',
+            'history.noWinner': 'No winner recorded',
 
             'howto.title': 'How to connect to a race',
             'howto.install.title': 'Install the component',
@@ -220,7 +222,7 @@
             'empty.noPlayers.text': 'Be the first to join!',
             'empty.noRaces.title': '🏁 No active races',
             'empty.noRaces.text': 'Wait until a host creates a race',
-            'empty.noActivePlayers': 'No active players yet',
+            'empty.noHistory': 'No finished races yet',
             'common.updated': 'Updated:',
             'common.loadingError': 'Loading error',
             'common.player': 'Player',
@@ -235,7 +237,7 @@
             'autostart.notice': '🟢 Everyone is ready — auto-start in 5 sec!',
 
             'confirm.startRace': 'Start the race? Countdown: {seconds} sec.',
-            'confirm.finishRace': 'Finish the race? Unfinished players will be listed as DNF. The race will disappear from the active list.',
+            'confirm.finishRace': 'Finish the race? Unfinished players will be listed as DNF. The race will move to the History section.',
             'confirm.kickPlayer': 'Kick this player from the race?',
             'confirm.deleteRace': '🗑️ Delete this race completely? This will delete all participants and results. This cannot be undone.',
             'alert.loginFirst': 'Log in first',
