@@ -1593,6 +1593,28 @@ document.addEventListener('DOMContentLoaded', () => {
             if (onHome) loadUserCount();
         }
     }, 15000);
+
+    // Лёгкий live-poll: только проверка Twitch-статуса уже отрисованных
+    // карточек, без полной перерисовки списка. Раз в 45с — ловим моменты,
+    // когда кто-то пошёл/вышел из эфира, пока пользователь сидит на странице.
+    setInterval(() => {
+        if (currentRaceId) return;
+        if (document.getElementById('page-players')?.hidden) return;
+        const cards = document.querySelectorAll('#playerSearchResults .race-card[data-player]');
+        if (cards.length === 0) return;
+        const twitches = new Set();
+        cards.forEach(card => {
+            const badge = card.querySelector('.player-live-badge');
+            if (badge && badge.href) {
+                const m = badge.href.match(/twitch\.tv\/([^/?#]+)/i);
+                if (m) twitches.add(decodeURIComponent(m[1]));
+            }
+        });
+        if (twitches.size === 0) return;
+        const container = document.getElementById('playerSearchResults');
+        const playerUsernames = Array.from(cards).map(c => c.getAttribute('data-player'));
+        enrichPlayersWithTwitchLive(Array.from(twitches), container, playerUsernames);
+    }, 45000);
 });
 
 // Закрытие модалок по клику вне
@@ -1706,7 +1728,22 @@ function sortUsersByStats(users, stats) {
     });
 }
 
+// Поднимает игроков, которые сейчас live на Twitch, в начало списка.
+// Вызывается ПОСЛЕ sortUsersByStats, чтобы сортировка по победам/матчам
+// работала ВНУТРИ групп (live отдельно от не-live).
+function sortLiveFirst(users, twitchByName, liveSet) {
+    if (!liveSet || liveSet.size === 0) return users;
+    const isLive = u => {
+        const tw = twitchByName[u.username];
+        return tw && liveSet.has(String(tw).toLowerCase());
+    };
+    const live = users.filter(isLive);
+    const rest = users.filter(u => !isLive(u));
+    return [...live, ...rest];
+}
+
 // Отрисовка карточек игроков (общая для поиска и случайного списка)
+// `liveSet` — Set() Twitch-ников (в нижнем регистре), которые сейчас live.
 function renderPlayerCards(users, stats, twitchByName = {}, liveSet = new Set()) {
     return '<div style="display:flex;flex-direction:column;gap:0.5rem;">' +
         users.map(u => {
@@ -1716,14 +1753,24 @@ function renderPlayerCards(users, stats, twitchByName = {}, liveSet = new Set())
             const s = stats[u.username] || { races: 0, wins: 0 };
             const tw = twitchByName[u.username] || null;
             const isLive = tw && liveSet.has(String(tw).toLowerCase());
-            const twitchHtml = isLive
-                ? `<div style="margin-top:4px;font-size:0.78rem;font-weight:800;color:#ff3b3b;">🔴 ${tr('twitch.live')}</div>`
+
+            // Кликабельный бейдж-ссылка, как в гонке. Ссылка отдельная от
+            // onclick карточки (event.stopPropagation), чтобы клик по
+            // бейджу НЕ открывал профиль игрока.
+            const twitchBadge = isLive
+                ? `<a href="https://twitch.tv/${encodeURIComponent(tw)}" target="_blank" rel="noopener noreferrer"
+                       onclick="event.stopPropagation();"
+                       class="player-live-badge"
+                       title="${tr('twitch.watchTitle')}">
+                       <span class="player-live-dot"></span>${tr('twitch.live')}
+                   </a>`
                 : '';
+
             return `
-                <div class="race-card" onclick="location.hash='#profile/${encodeURIComponent(u.username)}'" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                <div class="race-card ${isLive ? 'player-live' : ''}" data-player="${name}" onclick="location.hash='#profile/${encodeURIComponent(u.username)}'" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
                     <div style="min-width:0;flex:1;">
                         <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
-                        ${twitchHtml}
+                        ${twitchBadge}
                     </div>
                     <div style="display:flex;gap:10px;white-space:nowrap;align-items:center;">
                         <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:#ffd93d;font-size:0.85rem;" title="${tr('players.winsTitle')}">🥇 ${s.wins}</span>
@@ -1822,13 +1869,17 @@ async function loadRandomPlayers() {
 
         if (playerSortMode) {
             const stats = await fetchPlayerStats(users.map(u => u.username));
+            // Параллельно с stats тянем Twitch live, чтобы сразу отсортировать
+            // и отрендерить с бейджами (а не через фоновое DOM-вмешательство).
+            const liveSet = await fetchLiveTwitchUsernames(
+                Object.values(twitchByName).filter(Boolean)
+            );
             const sorted = sortUsersByStats(users, stats).slice(0, 30);
+            const ordered = sortLiveFirst(sorted, twitchByName, liveSet);
             const label = playerSortMode === 'wins' ? tr('players.leaderboardWins') : tr('players.leaderboardRaces');
             container.innerHTML =
                 `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${label}</p>` +
-                renderPlayerCards(sorted, stats, twitchByName);
-            // Догружаем Twitch live в фоне
-            enrichPlayersWithTwitchLive(Object.values(twitchByName).filter(Boolean), container);
+                renderPlayerCards(ordered, stats, twitchByName, liveSet);
             return;
         }
 
@@ -1840,15 +1891,21 @@ async function loadRandomPlayers() {
         }
         const picked = shuffled.slice(0, 10);
 
-        const stats = await fetchPlayerStats(picked.map(u => u.username));
         const pickedTwitch = {};
         picked.forEach(u => { pickedTwitch[u.username] = twitchByName[u.username] || null; });
+        const pickedTwitchUsernames = picked.map(u => pickedTwitch[u.username]).filter(Boolean);
+
+        // Параллельно: stats + проверка live на Twitch. Карточки рисуем один раз
+        // уже с бейджами, без отдельного фонового прохода.
+        const [stats, liveSet] = await Promise.all([
+            fetchPlayerStats(picked.map(u => u.username)),
+            fetchLiveTwitchUsernames(pickedTwitchUsernames)
+        ]);
+        const ordered = sortLiveFirst(picked, pickedTwitch, liveSet);
 
         container.innerHTML =
             `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${tr('players.random')}</p>` +
-            renderPlayerCards(picked, stats, pickedTwitch);
-        // Догружаем Twitch live в фоне (бейдж «live» появится сам, если кто-то стримит)
-        enrichPlayersWithTwitchLive(picked.map(u => pickedTwitch[u.username]).filter(Boolean), container, picked.map(u => u.username));
+            renderPlayerCards(ordered, stats, pickedTwitch, liveSet);
 
     } catch (err) {
         console.error(err);
@@ -1891,24 +1948,22 @@ async function searchPlayers() {
             return;
         }
 
-        // stats идут параллельно с уже идущим поиском
-        const [stats, twitchUsers] = await Promise.all([
-            fetchPlayerStats(users.map(u => u.username)),
-            // Список Twitch-ников, которых надо проверить
-            Promise.resolve(users.map(u => u.twitch_username).filter(Boolean))
-        ]);
-        // Помечаем кеш
+        // Помечаем кеш + собираем Twitch-ники сразу из результата запроса.
         users.forEach(u => { playerTwitchUsernameCache[u.username] = u.twitch_username || null; });
-        const sorted = sortUsersByStats(users, stats);
         const twitchByName = {};
-        sorted.forEach(u => { twitchByName[u.username] = u.twitch_username || null; });
+        users.forEach(u => { twitchByName[u.username] = u.twitch_username || null; });
+        const twitchUsers = users.map(u => u.twitch_username).filter(Boolean);
 
-        // Рисуем карточки СРАЗУ (без ожидания Twitch live-проверки).
-        container.innerHTML = renderPlayerCards(sorted, stats, twitchByName);
-        // Догружаем Twitch live в фоне (если пользователь ещё на этой странице).
-        if (twitchUsers.length > 0) {
-            enrichPlayersWithTwitchLive(twitchUsers, container, sorted.map(u => u.username));
-        }
+        // Параллельно: stats + проверка live на Twitch. Карточки рисуем
+        // сразу с бейджами и уже отсортированные (live в начале).
+        const [stats, liveSet] = await Promise.all([
+            fetchPlayerStats(users.map(u => u.username)),
+            fetchLiveTwitchUsernames(twitchUsers)
+        ]);
+        const sorted = sortUsersByStats(users, stats);
+        const ordered = sortLiveFirst(sorted, twitchByName, liveSet);
+
+        container.innerHTML = renderPlayerCards(ordered, stats, twitchByName, liveSet);
 
     } catch (err) {
         console.error(err);
@@ -1916,42 +1971,57 @@ async function searchPlayers() {
     }
 }
 
-// Запрашивает у Edge Function список live-стримеров и точечно добавляет
-// бейдж «🔴 В эфире» в карточки. Не блокирует основной рендер.
+// Запрашивает у Edge Function список live-стримеров и ТОЧЕЧНО обновляет
+// уже отрисованные карточки: добавляет/убирает класс .player-live и бейдж.
+// Используется, когда live-статус меняется, пока пользователь сидит
+// на странице (например, кто-то пошёл в эфир). Не пересортировывает —
+// для подъёма live в начало нужно перерендерить (это делают
+// loadRandomPlayers / searchPlayers при следующем вызове).
+//
+// Дедупликация: пока запрос в полёте, все ожидающие получают тот же Promise.
 let __twitchEnrichInFlight = null;
 async function enrichPlayersWithTwitchLive(twitchUsernames, container, playerUsernames) {
     if (!twitchUsernames || twitchUsernames.length === 0) return;
-    try {
-        if (__twitchEnrichInFlight) await __twitchEnrichInFlight;
-    } catch (_) {}
+    if (__twitchEnrichInFlight) return __twitchEnrichInFlight;
     __twitchEnrichInFlight = (async () => {
-        const liveSet = await fetchLiveTwitchUsernames(twitchUsernames);
-        if (!container || !container.isConnected) return;
-        if (liveSet.size === 0) return;
-        // Точечно вставляем бейджи — ищем карточки по нику игрока.
-        const usernameToTwitch = {};
-        twitchUsernames.forEach(t => { usernameToTwitch[t.toLowerCase()] = t; });
-        const liveByName = {};
-        (playerUsernames || []).forEach(n => {
-            const tw = (usernameToTwitch[String(n).toLowerCase()]);
-            if (tw && liveSet.has(String(tw).toLowerCase())) liveByName[n] = tw;
-        });
-        container.querySelectorAll('.race-card').forEach(card => {
-            const h3 = card.querySelector('h3');
-            if (!h3) return;
-            // Первое текстовое содержимое h3 — это имя
-            const name = h3.textContent.replace(/MASTER|HOST/g, '').trim();
-            const tw = liveByName[name];
-            if (!tw) return;
-            if (card.querySelector('.twitch-live-text')) return;
-            const live = document.createElement('div');
-            live.className = 'twitch-live-text';
-            live.style.cssText = 'margin-top:4px;font-size:0.78rem;font-weight:800;color:#ff3b3b;';
-            live.textContent = '🔴 ' + tr('twitch.live');
-            h3.parentElement.appendChild(live);
-        });
+        try {
+            const liveSet = await fetchLiveTwitchUsernames(twitchUsernames);
+            if (!container || !container.isConnected) return;
+            const usernameToTwitch = {};
+            twitchUsernames.forEach(t => { usernameToTwitch[t.toLowerCase()] = t; });
+            container.querySelectorAll('.race-card[data-player]').forEach(card => {
+                const name = card.getAttribute('data-player');
+                const tw = usernameToTwitch[String(name).toLowerCase()];
+                const isLive = tw && liveSet.has(String(tw).toLowerCase());
+                const hadBadge = !!card.querySelector('.player-live-badge');
+                if (isLive && !hadBadge) {
+                    // Добавляем бейдж и класс
+                    const h3 = card.querySelector('h3');
+                    if (h3 && h3.parentElement) {
+                        const badge = document.createElement('a');
+                        badge.href = `https://twitch.tv/${encodeURIComponent(tw)}`;
+                        badge.target = '_blank';
+                        badge.rel = 'noopener noreferrer';
+                        badge.onclick = (e) => e.stopPropagation();
+                        badge.className = 'player-live-badge';
+                        badge.title = tr('twitch.watchTitle');
+                        badge.innerHTML = `<span class="player-live-dot"></span>${tr('twitch.live')}`;
+                        h3.parentElement.appendChild(badge);
+                    }
+                    card.classList.add('player-live');
+                } else if (!isLive && hadBadge) {
+                    card.classList.remove('player-live');
+                    const badge = card.querySelector('.player-live-badge');
+                    if (badge) badge.remove();
+                } else if (isLive) {
+                    card.classList.add('player-live');
+                }
+            });
+        } finally {
+            __twitchEnrichInFlight = null;
+        }
     })();
-    try { await __twitchEnrichInFlight; } finally { __twitchEnrichInFlight = null; }
+    return __twitchEnrichInFlight;
 }
 
 // Унифицированный «обновить то, что на странице игроков»: либо поиск, либо рандом.

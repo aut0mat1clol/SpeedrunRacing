@@ -1016,3 +1016,61 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
     border-color: var(--primary);
     color: var(--primary);
 }
+
+/* ============================================================
+   PLAYER LIVE BADGE (в разделе «Игроки»)
+   ============================================================ */
+.player-live-badge {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 5px;
+    margin-top: 6px;
+    padding: 3px 9px 3px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, #9147ff 18%, transparent);
+    border: 1px solid color-mix(in srgb, #9147ff 55%, transparent);
+    color: #c5a6ff;
+    font-weight: 900;
+    font-size: 0.72rem;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    text-decoration: none;
+    line-height: 1.2;
+    transition: background .15s, border-color .15s, transform .15s;
+    width: fit-content;
+    /* не даём плашке растягиваться и ломать карточку */
+    max-width: 100%;
+}
+.player-live-badge:hover {
+    background: color-mix(in srgb, #9147ff 32%, transparent);
+    border-color: #9147ff;
+    color: #fff;
+    transform: translateY(-1px);
+}
+.player-live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff3b3b;
+    box-shadow: 0 0 8px rgba(255,59,59,.8);
+    flex-shrink: 0;
+    animation: player-live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes player-live-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.45; transform: scale(0.75); }
+}
+
+/* Подсветка карточки live-стримера — лёгкая фиолетовая обводка,
+   чтобы было видно даже одним взглядом на список. */
+.race-card.player-live {
+    border-color: color-mix(in srgb, #9147ff 55%, var(--border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, #9147ff 25%, transparent),
+                0 6px 20px color-mix(in srgb, #9147ff 18%, transparent);
+}
+.race-card.player-live::before {
+    /* race-card уже имеет ::before (зелёная полоска слева) — для live
+       подменяем цвет на фиолетовый через дополнительный псевдоэлемент. */
+    background: #9147ff;
+    opacity: 1;
+}
