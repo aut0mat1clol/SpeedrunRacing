@@ -1229,6 +1229,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadRaceList();
     loadRaceHistory();
     loadUserCount();
+    updatePlayerSortUI();
 
     // Автообновление
     setInterval(() => {
@@ -1275,37 +1276,92 @@ function escapeHtml(s) {
     }[c]));
 }
 
-// Количество завершённых гонок для списка ников: { ник: число }
-async function fetchRaceCounts(usernames) {
-    const counts = {};
-    if (!usernames || usernames.length === 0) return counts;
+// Статистика для сортировки/фильтров: количество матчей (race_results) и
+// количество побед (place === 1 и не DNF) для каждого ника.
+// { ник: { races: число, wins: число } }
+async function fetchPlayerStats(usernames) {
+    const stats = {};
+    if (!usernames || usernames.length === 0) return stats;
     try {
         const { data } = await db
             .from('race_results')
-            .select('player_name')
+            .select('player_name, place, is_dnf')
             .in('player_name', usernames);
         (data || []).forEach(r => {
-            counts[r.player_name] = (counts[r.player_name] || 0) + 1;
+            if (!stats[r.player_name]) stats[r.player_name] = { races: 0, wins: 0 };
+            stats[r.player_name].races += 1;
+            if (!r.is_dnf && r.place === 1) stats[r.player_name].wins += 1;
         });
-    } catch (e) { /* счётчики необязательны */ }
-    return counts;
+    } catch (e) { /* статистика необязательна */ }
+    return stats;
+}
+
+// === Сортировка списка игроков по победам / матчам ===
+let playerSortMode = null;   // null | 'wins' | 'races'
+let playerSortDir  = 'desc'; // 'desc' | 'asc'
+
+function setPlayerSort(mode) {
+    if (mode === null) {
+        playerSortMode = null;
+    } else if (playerSortMode === mode) {
+        // Повторный клик по той же кнопке — переключаем направление.
+        playerSortDir = playerSortDir === 'desc' ? 'asc' : 'desc';
+    } else {
+        playerSortMode = mode;
+        playerSortDir  = 'desc';
+    }
+    updatePlayerSortUI();
+    searchPlayers();
+}
+
+function updatePlayerSortUI() {
+    const winsBtn    = document.getElementById('sortByWinsBtn');
+    const racesBtn   = document.getElementById('sortByRacesBtn');
+    const resetBtn   = document.getElementById('sortResetBtn');
+    const winsArrow  = document.getElementById('sortWinsArrow');
+    const racesArrow = document.getElementById('sortRacesArrow');
+    if (!winsBtn || !racesBtn) return;
+
+    const arrow = playerSortDir === 'desc' ? ' ▼' : ' ▲';
+
+    winsBtn.className  = playerSortMode === 'wins'  ? 'btn btn-primary' : 'btn btn-ghost';
+    racesBtn.className = playerSortMode === 'races' ? 'btn btn-primary' : 'btn btn-ghost';
+    if (winsArrow)  winsArrow.textContent  = playerSortMode === 'wins'  ? arrow : '';
+    if (racesArrow) racesArrow.textContent = playerSortMode === 'races' ? arrow : '';
+    if (resetBtn) resetBtn.style.display = playerSortMode ? '' : 'none';
+}
+
+function sortUsersByStats(users, stats) {
+    if (!playerSortMode) return users;
+    const key = playerSortMode === 'wins' ? 'wins' : 'races';
+    const dir = playerSortDir === 'asc' ? 1 : -1;
+    return [...users].sort((a, b) => {
+        const va = (stats[a.username] && stats[a.username][key]) || 0;
+        const vb = (stats[b.username] && stats[b.username][key]) || 0;
+        if (va !== vb) return (va - vb) * dir;
+        return a.username.localeCompare(b.username);
+    });
 }
 
 // Отрисовка карточек игроков (общая для поиска и случайного списка)
-function renderPlayerCards(users, counts) {
+function renderPlayerCards(users, stats) {
     return '<div style="display:flex;flex-direction:column;gap:0.5rem;">' +
         users.map(u => {
             const name = escapeHtml(u.username);
             const roleBadge = u.role === 'master-host' ? ' <span style="font-size:0.65rem;color:#e0503f;font-weight:900;">MASTER</span>'
                 : u.role === 'host' ? ' <span style="font-size:0.65rem;color:#e8a830;font-weight:900;">HOST</span>' : '';
-            const n = counts[u.username] || 0;
+            const s = stats[u.username] || { races: 0, wins: 0 };
             return `
                 <div class="race-card" onclick="location.hash='#profile/${encodeURIComponent(u.username)}'" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
                     <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
-                    <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-dim);font-size:0.85rem;white-space:nowrap;" title="${tr('players.racesTitle')}">🏁 ${n}</span>
+                    <div style="display:flex;gap:10px;white-space:nowrap;">
+                        <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:#ffd93d;font-size:0.85rem;" title="${tr('players.winsTitle')}">🥇 ${s.wins}</span>
+                        <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-dim);font-size:0.85rem;" title="${tr('players.racesTitle')}">🏁 ${s.races}</span>
+                    </div>
                 </div>`;
         }).join('') + '</div>';
 }
+
 
 // Защита от автозаполнения браузером: если в поле поиска что-то
 // «само» появилось до того, как пользователь начал печатать — очищаем.
@@ -1359,7 +1415,9 @@ window.addEventListener('pageshow', () => {
     setTimeout(clearAutofilledSearch, 300);
 });
 
-// До 10 случайных игроков — чтобы страница не была пустой
+// До 10 случайных игроков — чтобы страница не была пустой.
+// Если активна сортировка по победам/матчам — вместо случайных игроков
+// показываем полноценный лидерборд (топ игроков по выбранному показателю).
 async function loadRandomPlayers() {
     const container = document.getElementById('playerSearchResults');
     if (!container) return;
@@ -1370,7 +1428,7 @@ async function loadRandomPlayers() {
         const { data: users, error } = await db
             .from('users')
             .select('username, role')
-            .limit(100);
+            .limit(200);
 
         if (error) throw error;
 
@@ -1379,24 +1437,36 @@ async function loadRandomPlayers() {
             return;
         }
 
-        // Перемешиваем на клиенте (Fisher–Yates) и берём 10
-        for (let i = users.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [users[i], users[j]] = [users[j], users[i]];
+        if (playerSortMode) {
+            const stats = await fetchPlayerStats(users.map(u => u.username));
+            const sorted = sortUsersByStats(users, stats).slice(0, 30);
+            const label = playerSortMode === 'wins' ? tr('players.leaderboardWins') : tr('players.leaderboardRaces');
+            container.innerHTML =
+                `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${label}</p>` +
+                renderPlayerCards(sorted, stats);
+            return;
         }
-        const picked = users.slice(0, 10);
 
-        const counts = await fetchRaceCounts(picked.map(u => u.username));
+        // Перемешиваем на клиенте (Fisher–Yates) и берём 10
+        const shuffled = [...users];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        const picked = shuffled.slice(0, 10);
+
+        const stats = await fetchPlayerStats(picked.map(u => u.username));
 
         container.innerHTML =
             `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${tr('players.random')}</p>` +
-            renderPlayerCards(picked, counts);
+            renderPlayerCards(picked, stats);
 
     } catch (err) {
         console.error(err);
         container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
     }
 }
+
 
 async function searchPlayers() {
     const input = document.getElementById('playerSearchInput');
@@ -1431,8 +1501,9 @@ async function searchPlayers() {
             return;
         }
 
-        const counts = await fetchRaceCounts(users.map(u => u.username));
-        container.innerHTML = renderPlayerCards(users, counts);
+        const stats = await fetchPlayerStats(users.map(u => u.username));
+        const sorted = sortUsersByStats(users, stats);
+        container.innerHTML = renderPlayerCards(sorted, stats);
 
     } catch (err) {
         console.error(err);

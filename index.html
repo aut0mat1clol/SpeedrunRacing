@@ -161,6 +161,17 @@
                    oninput="onPlayerSearchInput()" autocomplete="off" autocorrect="off"
                    autocapitalize="off" spellcheck="false"
                    style="max-width:420px;resize:none;overflow:hidden;white-space:nowrap;"></textarea>
+
+            <div class="player-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:0.85rem;">
+                <button class="btn btn-ghost" id="sortByWinsBtn" onclick="setPlayerSort('wins')">
+                    🥇 <span data-i18n="players.sortWins">По победам</span><span class="sort-arrow" id="sortWinsArrow"></span>
+                </button>
+                <button class="btn btn-ghost" id="sortByRacesBtn" onclick="setPlayerSort('races')">
+                    🏁 <span data-i18n="players.sortRaces">По матчам</span><span class="sort-arrow" id="sortRacesArrow"></span>
+                </button>
+                <button class="btn btn-ghost" id="sortResetBtn" onclick="setPlayerSort(null)" style="display:none;" data-i18n="players.sortReset">✕ Сброс</button>
+            </div>
+
             <div id="playerSearchResults" style="margin-top:1.25rem;">
                 <div class="empty-state"><p data-i18n="players.hint">Введите минимум 2 символа для поиска</p></div>
             </div>
