@@ -274,6 +274,21 @@
         </div>
     </div>
 
+<!-- Twitch settings modal (открывается из профиля) -->
+<div class="modal" id="twitchSettingsModal">
+    <div class="modal-content">
+        <h2 data-i18n="profile.twitchSettingsTitle">Настройка Twitch</h2>
+        <div id="twitchSettingsError" class="modal-error"></div>
+        <label for="profileTwitchUsername" data-i18n="profile.twitchLabel">Ваш Twitch:</label>
+        <input class="modal-input" id="profileTwitchUsername" placeholder="shroud" data-i18n-placeholder="profile.twitchPlaceholder" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+        <p class="modal-hint" data-i18n="profile.twitchHintOwn">Укажите ваш ник на Twitch — ссылка появится в вашем профиле, а во время гонки другие увидят кнопку перехода на стрим, если вы в эфире.</p>
+        <div class="modal-actions">
+            <button class="btn btn-ghost" onclick="closeTwitchSettingsModal()" data-i18n="auth.cancel">Отмена</button>
+            <button class="btn btn-primary" onclick="saveTwitchSettings()" data-i18n="profile.twitchSave">Сохранить</button>
+        </div>
+    </div>
+</div>
+
     <script src="theme.js"></script>
     <script src="i18n.js"></script>
     <script src="config.js"></script>

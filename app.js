@@ -282,11 +282,10 @@ function switchAuthTab(tab) {
 }
 
 // ============================================================
-// TWITCH — настройки в профиле
+// TWITCH — настройки в профиле (через модалку)
 // ============================================================
 
-// Приводим ввод пользователя к чистому нику канала: снимаем случайно
-// вставленную ссылку (twitch.tv/nick), пробелы и приводим к нижнему регистру.
+// Приводим ввод пользователя к чистому нику канала
 function normalizeTwitchUsername(raw) {
     if (!raw) return '';
     let v = raw.trim();
@@ -296,47 +295,53 @@ function normalizeTwitchUsername(raw) {
     return v;
 }
 
-// Сохранение Twitch-ника прямо из страницы профиля
-async function saveProfileTwitch() {
+async function showTwitchSettingsModal() {
     if (!currentUser) { showAuthModal(); return; }
+    const input = document.getElementById('profileTwitchUsername');
+    const errEl = document.getElementById('twitchSettingsError');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (input) input.value = '';
+    document.getElementById('twitchSettingsModal').classList.add('active');
+    // подтянуть текущее значение
+    try {
+        const { data } = await db.from('users').select('twitch_username').eq('id', currentUser.id).maybeSingle();
+        if (input && data && data.twitch_username) input.value = data.twitch_username;
+        if (input) input.focus();
+    } catch(e) {}
+}
 
-    const input = document.getElementById('profileTwitchInput');
-    const msgEl = document.getElementById('profileTwitchSaveMsg');
+function closeTwitchSettingsModal() {
+    document.getElementById('twitchSettingsModal').classList.remove('active');
+}
+
+async function saveTwitchSettings() {
+    if (!currentUser) return;
+    const input = document.getElementById('profileTwitchUsername');
+    const errEl = document.getElementById('twitchSettingsError');
     const raw = input ? input.value : '';
     const twitch = normalizeTwitchUsername(raw);
 
     if (twitch && !/^[a-zA-Z0-9_]{2,25}$/.test(twitch)) {
-        showToast(tr('profileSettings.err.invalid'));
-        if (input) input.focus();
+        if (errEl) { errEl.textContent = tr('profileSettings.err.invalid'); errEl.style.display = 'block'; }
+        else showToast(tr('profileSettings.err.invalid'));
         return;
     }
-
     try {
-        const { error } = await db
-            .from('users')
-            .update({ twitch_username: twitch || null })
-            .eq('id', currentUser.id);
-
+        const { error } = await db.from('users').update({ twitch_username: twitch || null }).eq('id', currentUser.id);
         if (error) throw error;
-
-        // обновляем кэш twitch-ников, чтобы live-бейджи сразу подхватили новое имя
-        if (currentUser.username) {
-            playerTwitchUsernameCache[currentUser.username] = twitch || null;
-        }
-
+        if (currentUser.username) playerTwitchUsernameCache[currentUser.username] = twitch || null;
+        closeTwitchSettingsModal();
         showToast(tr('profileSettings.saved'));
-        if (msgEl) {
-            msgEl.textContent = tr('profile.twitchSaved');
-            msgEl.style.display = '';
-            setTimeout(() => { msgEl.style.display = 'none'; }, 2000);
-        }
-        // перезагружаем профиль, чтобы обновить ссылку
-        loadPlayerProfile(currentUser.username);
+        if (currentProfileUsername) loadPlayerProfile(currentProfileUsername);
     } catch (err) {
         console.error(err);
-        showToast(tr('profileSettings.err.save') + (err.message || ''));
+        if (errEl) { errEl.textContent = tr('profileSettings.err.save') + (err.message || ''); errEl.style.display = 'block'; }
+        else showToast(tr('profileSettings.err.save') + err.message);
     }
 }
+
+// для совместимости со старым названием, если где-то осталось
+const saveProfileTwitch = saveTwitchSettings;
 
 // ============================================================
 // TWITCH — проверка live-статуса через безопасную Edge Function
@@ -344,21 +349,15 @@ async function saveProfileTwitch() {
 
 // Кэш последнего ответа, чтобы не спамить функцию при частых перерисовках.
 let twitchLiveCache = { at: 0, live: new Set() };
-const TWITCH_LIVE_CACHE_TTL = 20000; // 20 секунд
+const TWITCH_LIVE_CACHE_TTL = 15000; // 15 секунд, меньше чем интервал вотчера (20с)
 
 // Возвращает Set() ников (в нижнем регистре), которые сейчас live на Twitch.
-// usernames — произвольный список твич-ников для проверки.
 async function fetchLiveTwitchUsernames(usernames) {
     const clean = [...new Set((usernames || [])
         .filter(Boolean)
         .map(u => String(u).toLowerCase()))];
 
     if (clean.length === 0) return new Set();
-
-    const now = Date.now();
-    if (now - twitchLiveCache.at < TWITCH_LIVE_CACHE_TTL) {
-        return twitchLiveCache.live;
-    }
 
     try {
         const resp = await fetch(TWITCH_LIVE_FN_URL, {
@@ -373,14 +372,14 @@ async function fetchLiveTwitchUsernames(usernames) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
         const live = new Set((data.live || []).map(u => String(u).toLowerCase()));
-        twitchLiveCache = { at: now, live };
+        twitchLiveCache = { at: Date.now(), live };
         return live;
     } catch (e) {
         console.warn('[twitch] Не удалось проверить live-статус:', e);
-        return twitchLiveCache.live; // отдаём последнее известное, если запрос не удался
+        // fallback на последний известный кеш
+        return twitchLiveCache.live || new Set();
     }
 }
-
 function twitchWatchButtonHtml(twitchUsername, extraStyle) {
     if (!twitchUsername) return '';
     const url = `https://twitch.tv/${encodeURIComponent(twitchUsername)}`;
@@ -1482,6 +1481,12 @@ document.getElementById('authModal').addEventListener('click', e => {
 document.getElementById('createRaceModal').addEventListener('click', e => {
     if (e.target.id === 'createRaceModal') closeCreateRace();
 });
+const twitchModal = document.getElementById('twitchSettingsModal');
+if (twitchModal) {
+    twitchModal.addEventListener('click', e => {
+        if (e.target.id === 'twitchSettingsModal') closeTwitchSettingsModal();
+    });
+}
 
 // Enter для форм
 document.getElementById('loginPassword').addEventListener('keypress', e => {
@@ -1490,6 +1495,9 @@ document.getElementById('loginPassword').addEventListener('keypress', e => {
 document.getElementById('regPassword').addEventListener('keypress', e => {
     if (e.key === 'Enter') registerUser();
 });
+const twitchInput = document.getElementById('profileTwitchUsername');
+if (twitchInput) twitchInput.addEventListener('keypress', e => { if (e.key === 'Enter') saveTwitchSettings(); });
+
 
 // Стили для текущего игрока
 const s = document.createElement('style');
@@ -1772,7 +1780,6 @@ async function loadPlayerProfile(username) {
     container.innerHTML = `<p class="loading-text">⏳ ${tr('profile.loading')}</p>`;
 
     try {
-        // 1) Пользователь
         const { data: user, error: userErr } = await db
             .from('users')
             .select('username, role, twitch_username')
@@ -1789,7 +1796,6 @@ async function loadPlayerProfile(username) {
         const isOwnProfile = currentUser && currentUser.username &&
             currentUser.username.toLowerCase() === user.username.toLowerCase();
 
-        // Twitch live check
         let isTwitchLive = false;
         if (user.twitch_username) {
             try {
@@ -1798,7 +1804,6 @@ async function loadPlayerProfile(username) {
             } catch(e) {}
         }
 
-        // 2) Результаты
         const { data: results } = await db
             .from('race_results')
             .select('race_id, place, total_time, is_dnf, timing_method')
@@ -1831,26 +1836,18 @@ async function loadPlayerProfile(username) {
                 <div style="font-size:0.75rem;color:var(--text-dim);font-weight:700;margin-top:4px;">${label}</div>
             </div>`;
 
-        // Twitch блок
         let twitchBlockHtml = '';
         if (isOwnProfile) {
-            const currentTwitch = escapeHtml(user.twitch_username || '');
+            const twitchBtnLabel = user.twitch_username ? tr('profile.twitchEdit') : tr('profile.twitchLink');
+            const twitchStatus = user.twitch_username
+                ? `<a href="https://twitch.tv/${encodeURIComponent(user.twitch_username)}" target="_blank" rel="noopener noreferrer" style="font-weight:800;color:#9146ff;text-decoration:none;">${isTwitchLive ? '🔴 ' + tr('twitch.live') + ' · ' : ''}twitch.tv/${escapeHtml(user.twitch_username)}</a>`
+                : `<span style="color:var(--text-dim);font-weight:600;">${tr('profile.twitchUnlinked')}</span>`;
             twitchBlockHtml = `
-                <div style="margin-top:14px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:520px;">
-                    <label for="profileTwitchInput" style="display:block;font-weight:800;font-size:.85rem;color:var(--text-dim);margin-bottom:6px;">${tr('profile.twitchLabel')}</label>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-                        <input class="modal-input" id="profileTwitchInput" value="${currentTwitch}"
-                            placeholder="${tr('profile.twitchPlaceholder')}"
-                            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-                            style="flex:1;min-width:180px;margin:0;padding:10px 12px;"
-                            onkeydown="if(event.key==='Enter'){saveProfileTwitch();}">
-                        <button class="btn btn-primary" onclick="saveProfileTwitch()" style="white-space:nowrap;">${tr('profile.twitchSave')}</button>
-                        <span id="profileTwitchSaveMsg" style="font-size:0.8rem;color:var(--primary);font-weight:700;display:none;"></span>
-                    </div>
-                    <p style="color:var(--text-dim);font-weight:600;font-size:.82rem;margin:8px 0 0;">${tr('profile.twitchHintOwn')}</p>
+                <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                    ${twitchStatus}
+                    <button class="btn btn-ghost" style="padding:6px 12px;font-size:0.85rem;" onclick="showTwitchSettingsModal()">${twitchBtnLabel}</button>
                 </div>`;
         } else if (user.twitch_username) {
-            // Показываем "В эфире" если live, иначе просто "Twitch"
             if (isTwitchLive) {
                 twitchBlockHtml = `
                 <p style="margin-top:10px;">

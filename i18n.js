@@ -81,6 +81,10 @@
             'profile.twitchHintOwn': 'Укажите ваш ник на Twitch — ссылка появится в вашем профиле, а во время гонки другие увидят кнопку перехода на стрим, если вы в эфире.',
             'profile.twitchSaved': 'Сохранено',
             'profile.twitchSave': 'Сохранить',
+            'profile.twitchSettingsTitle': 'Настройка Twitch',
+            'profile.twitchEdit': 'Изменить',
+            'profile.twitchLink': 'Привязать Twitch',
+            'profile.twitchUnlinked': 'Twitch не привязан',
 
             'howto.title': 'Как подключиться к гонке',
             'howto.install.title': 'Установи компонент',
@@ -257,6 +261,10 @@
             'profile.twitchHintOwn': 'Add your Twitch username — the link will show in your profile, and during a race others will see a button to your stream when you go live.',
             'profile.twitchSaved': 'Saved',
             'profile.twitchSave': 'Save',
+            'profile.twitchSettingsTitle': 'Twitch settings',
+            'profile.twitchEdit': 'Edit',
+            'profile.twitchLink': 'Link Twitch',
+            'profile.twitchUnlinked': 'Twitch not linked',
 
             'howto.title': 'How to connect to a race',
             'howto.install.title': 'Install the component',
