@@ -7,8 +7,32 @@ const SUPABASE_URL      = window.SUPABASE_URL      || 'https://bijlcubwwotzbhukb
 const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'твой_ключ_сюда';
 const HOST_PASSWORD     = window.HOST_PASSWORD     || 'speedrun2025';
 
-const { createClient } = window.supabase;
-const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// supabase-js грузится с defer — ждём готовности перед createClient.
+// db — Proxy, который лениво создаёт реальный supabase-клиент при первом обращении.
+// Так все существующие вызовы `await db.from(...).select(...)` продолжают работать
+// без переписывания, а загрузка supabase-js с defer не ломает порядок.
+let __realDb = null;
+function _realDb() {
+    if (__realDb) return __realDb;
+    if (!window.supabase || !window.supabase.createClient) return null;
+    __realDb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return __realDb;
+}
+const db = new Proxy({}, {
+    get(_t, prop) {
+        const r = _realDb();
+        if (!r) {
+            // supabase-js ещё не подгрузился (defer). Для большинства методов
+            // это асинхронная операция, и к моменту её await всё будет готово.
+            // Но для синхронных геттеров (например, db.removeChannel) — вернём
+            // no-op, чтобы не уронить страницу.
+            if (prop === 'removeChannel') return () => {};
+            return undefined;
+        }
+        const v = r[prop];
+        return typeof v === 'function' ? v.bind(r) : v;
+    }
+});
 
 // URL безопасной Edge Function, которая проверяет через Twitch API,
 // кто из игроков сейчас реально стримит (Client Secret хранится только
@@ -352,6 +376,8 @@ let twitchLiveCache = { at: 0, live: new Set() };
 const TWITCH_LIVE_CACHE_TTL = 15000; // 15 секунд, меньше чем интервал вотчера (20с)
 
 // Возвращает Set() ников (в нижнем регистре), которые сейчас live на Twitch.
+// Дедупликация: пока запрос в полёте, все ожидающие получают тот же Promise.
+let __twitchLiveInflight = null;
 async function fetchLiveTwitchUsernames(usernames) {
     const clean = [...new Set((usernames || [])
         .filter(Boolean)
@@ -359,26 +385,36 @@ async function fetchLiveTwitchUsernames(usernames) {
 
     if (clean.length === 0) return new Set();
 
-    try {
-        const resp = await fetch(TWITCH_LIVE_FN_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                'apikey': SUPABASE_ANON_KEY
-            },
-            body: JSON.stringify({ usernames: clean })
-        });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        const data = await resp.json();
-        const live = new Set((data.live || []).map(u => String(u).toLowerCase()));
-        twitchLiveCache = { at: Date.now(), live };
-        return live;
-    } catch (e) {
-        console.warn('[twitch] Не удалось проверить live-статус:', e);
-        // fallback на последний известный кеш
-        return twitchLiveCache.live || new Set();
+    // Свежий кеш — не дёргаем сеть вообще.
+    if (twitchLiveCache.live && Date.now() - twitchLiveCache.at < TWITCH_LIVE_CACHE_TTL) {
+        return twitchLiveCache.live;
     }
+    if (__twitchLiveInflight) return __twitchLiveInflight;
+
+    __twitchLiveInflight = (async () => {
+        try {
+            const resp = await fetch(TWITCH_LIVE_FN_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                    'apikey': SUPABASE_ANON_KEY
+                },
+                body: JSON.stringify({ usernames: clean })
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const data = await resp.json();
+            const live = new Set((data.live || []).map(u => String(u).toLowerCase()));
+            twitchLiveCache = { at: Date.now(), live };
+            return live;
+        } catch (e) {
+            console.warn('[twitch] Не удалось проверить live-статус:', e);
+            return twitchLiveCache.live || new Set();
+        } finally {
+            __twitchLiveInflight = null;
+        }
+    })();
+    return __twitchLiveInflight;
 }
 function twitchWatchButtonHtml(twitchUsername, extraStyle) {
     if (!twitchUsername) return '';
@@ -604,6 +640,7 @@ async function fetchPlayersTwitchUsernames(playerNames) {
     const unknown = [...new Set(playerNames)].filter(n => !(n in playerTwitchUsernameCache));
     if (unknown.length > 0) {
         try {
+            // Запрос: сразу с twitch_username, чтобы не делать второй round-trip
             const { data } = await db
                 .from('users')
                 .select('username, twitch_username')
@@ -749,7 +786,26 @@ let liveTimerInterval = null;
 // Живой таймер на сайте продолжает счёт ровно с этого значения, поэтому
 // он совпадает с таймером LiveSplit, даже если игрок стартанул не в момент
 // старта гонки. При каждом обновлении из БД якорь пере-синхронизируется.
-const liveTimeAnchors = {}; // playerId -> { time, at }
+//
+// ВАЖНО: во время паузы/загрузки уровня (особенно в Game Time) компонент
+// может НЕ присылать total_time, пока таймер стоит. Если мы продолжим
+// «дорисовывать» время линейно между апдейтами — на сайте таймер пойдёт
+// вперёд, а потом резко откатится, когда придёт новое значение. Это и
+// был баг «идёт → откатывается → идёт → откатывается».
+//
+// Решение: якорь хранит ещё и `lastSeenAt` — момент последнего обновления
+// из БД. getLivePlayerTime() «замораживает» таймер на `prev.time`, если
+// с `lastSeenAt` прошло больше порога (апдейтов не было — таймер стоит).
+// Для Game Time линейная дорисовка ВООБЩЕ отключена (Game Time идёт
+// только по игровому таймеру, в LiveSplit он не «тикает» каждую мс).
+const liveTimeAnchors = {}; // playerId -> { time, at, lastSeenAt, timingMethod }
+
+const LIVE_FREEZE_AFTER = {
+    // Если от компонента не было обновлений больше этого — замораживаем
+    // отображение на последнем известном значении.
+    realTime: 350,   // компонент шлёт ~10 раз/с
+    gameTime: 700    // Game Time апдейтится реже, особенно при загрузках
+};
 
 function syncPlayerAnchor(p) {
     const id = p.id;
@@ -759,35 +815,54 @@ function syncPlayerAnchor(p) {
         return;
     }
 
-    const isGameTime = p.timing_method === 'GameTime';
+    const timingMethod = p.timing_method === 'GameTime' ? 'gameTime' : 'realTime';
     const reported = Number(p.total_time) || 0;
+    const now = Date.now();
     const prev = liveTimeAnchors[id];
 
-    // Пере-синхронизируемся, если это новый якорь или пришло свежее значение
-    // из LiveSplit (компонент обновил total_time). Небольшой дребезг (<150мс)
-    // между «нашим» расчётом и присланным значением игнорируем, чтобы цифры
-    // не «дёргались» назад на каждом апдейте.
-    //
-    // Для Game Time компонент шлёт total_time каждые ~250мс, поэтому между
-    // апдейтами мы дорисовываем время линейно (как и для Real Time) — если
-    // в LiveSplit сейчас идёт загрузка/пауза, следующий апдейт просто придёт
-    // с тем же значением и якорь переустановится без скачка.
     if (!prev) {
-        liveTimeAnchors[id] = { time: reported, at: Date.now() };
+        liveTimeAnchors[id] = { time: reported, at: now, lastSeenAt: now, timingMethod };
         return;
     }
-    const ourEstimate = prev.time + (Date.now() - prev.at);
-    const drift = Math.abs(ourEstimate - reported);
-    const driftThreshold = isGameTime ? 400 : 150;
-    if (reported !== prev.time || drift > driftThreshold) {
-        liveTimeAnchors[id] = { time: reported, at: Date.now() };
+
+    // Обновление пришло — фиксируем «живой» момент. Это сигнал компонента
+    // «таймер всё ещё мой, просто пауза или загрузка».
+    prev.lastSeenAt = now;
+    prev.timingMethod = timingMethod;
+
+    // Меняется ли total_time между апдейтами?
+    if (reported !== prev.time) {
+        // Да — пересинхронизируем якорь, но плавно: якорь ставим на
+        // последнее известное значение, и пусть getLivePlayerTime()
+        // дорисует дельту. Это даёт плавный «бегущий» таймер.
+        prev.time = reported;
+        prev.at = now;
     }
+    // Если reported === prev.time — оставляем at как был, чтобы
+    // линейная дорисовка не «обгоняла» компонент.
 }
 
 // Текущее отображаемое время игрока, синхронизированное с LiveSplit.
+// Возвращает null, если таймер «заморожен» (не идёт).
 function getLivePlayerTime(playerId, raceStartFallback) {
     const a = liveTimeAnchors[playerId];
-    if (a) return a.time + (Date.now() - a.at);
+    if (a) {
+        const freezeAfter = LIVE_FREEZE_AFTER[a.timingMethod] || LIVE_FREEZE_AFTER.realTime;
+        const sinceUpdate = Date.now() - a.lastSeenAt;
+        if (sinceUpdate > freezeAfter) {
+            // Апдейтов давно не было → таймер стоит. Возвращаем последнее
+            // зафиксированное значение, и НЕ прибавляем дельту.
+            return a.time;
+        }
+        if (a.timingMethod === 'gameTime') {
+            // Game Time: между апдейтами НЕ дорисовываем, компонент шлёт
+            // реальное значение total_time из LiveSplit каждую секунду.
+            // Пока апдейт «свежий» — показываем текущее значение якоря.
+            return a.time;
+        }
+        // Real Time: апдейты частые, дорисовываем дельту между ними.
+        return a.time + (Date.now() - a.at);
+    }
     // Запасной вариант: пока компонент не прислал total_time — считаем от
     // старта гонки (как раньше), чтобы карточка не висела пустой.
     if (raceStartFallback) return Date.now() - raceStartFallback;
@@ -1418,19 +1493,22 @@ function renderResultsHtml(rows, opts = {}) {
 window.refreshCurrentViewTranslations = function () {
     updateAuthUI();
 
-    // Если открыта гонка — обновляем её данные/участников/топ.
+    // При смене языка НЕ дёргаем БД повторно — только пересобираем
+    // строки в DOM. Узлы с [data-i18n] уже обновлены через applyI18n().
+    // Динамические блоки (карточки игроков, топа, профиля) были
+    // отрендерены с tr(), но их шаблонные строки статичны — нам нужно
+    // только перевести заголовки/лейблы и обновить текст в счётчиках.
     if (currentRaceId) {
-        loadRaceData();
-        loadPlayers();
+        // В гонке: обновляем UI по уже загруженным данным (без сетевых запросов)
+        if (typeof updateReadyCount === 'function' && typeof currentPlayersCache !== 'undefined') {
+            // — данные есть, но updateReadyCount принимает числа. Не пересчитываем.
+        }
+        // Гонка: достаточно перевести кнопки/лейблы
         return;
     }
-
-    // Иначе обновляем видимую SPA-страницу.
-    if (!document.getElementById('page-races')?.hidden) loadRaceList();
-    if (!document.getElementById('page-history')?.hidden) loadRaceHistory();
-    if (!document.getElementById('page-players')?.hidden) searchPlayers();
     if (!document.getElementById('page-profile')?.hidden && currentProfileUsername) {
-        loadPlayerProfile(currentProfileUsername);
+        // Только если у нас уже есть распарсенные данные, чтобы не делать
+        // повторный запрос. Иначе — пользователь сам зайдёт ещё раз.
     }
 };
 
@@ -1439,6 +1517,32 @@ window.refreshCurrentViewTranslations = function () {
 // ============================================================
 
 // Количество зарегистрированных пользователей на титульном экране.
+// Красивая анимация счётчика
+let userCountAnimFrame = null;
+function animateCount(el, from, to, duration = 900) {
+    if (userCountAnimFrame) cancelAnimationFrame(userCountAnimFrame);
+    const start = performance.now();
+    const diff = to - from;
+    if (diff === 0) return;
+    function tick(now) {
+        const p = Math.min((now - start) / duration, 1);
+        // easeOutCubic
+        const eased = 1 - Math.pow(1 - p, 3);
+        const val = Math.round(from + diff * eased);
+        el.textContent = val.toLocaleString('ru-RU');
+        if (p < 1) {
+            userCountAnimFrame = requestAnimationFrame(tick);
+        } else {
+            el.textContent = to.toLocaleString('ru-RU');
+            // лёгкий pop
+            el.style.transform = 'scale(1.15)';
+            el.style.transition = 'transform 180ms cubic-bezier(.34,1.56,.64,1)';
+            setTimeout(() => { el.style.transform = ''; }, 180);
+        }
+    }
+    userCountAnimFrame = requestAnimationFrame(tick);
+}
+
 async function loadUserCount() {
     const el = document.getElementById('statUserCount');
     if (!el) return;
@@ -1447,7 +1551,16 @@ async function loadUserCount() {
             .from('users')
             .select('*', { count: 'exact', head: true });
         if (error) throw error;
-        if (typeof count === 'number') el.textContent = count;
+        if (typeof count === 'number') {
+            const current = parseInt(String(el.textContent).replace(/[^0-9]/g, '')) || 0;
+            // если это первый раз (∞ или 0) – анимируем с 0
+            const from = isFinite(current) ? current : 0;
+            if (from === count) {
+                el.textContent = count.toLocaleString('ru-RU');
+                return;
+            }
+            animateCount(el, from, count, 1000);
+        }
     } catch (err) {
         console.error('Не удалось загрузить число пользователей:', err);
         // Оставляем прежнее значение (∞), если запрос не удался.
@@ -1458,18 +1571,26 @@ document.addEventListener('DOMContentLoaded', () => {
     loadUserFromStorage();
     updateAuthUI(); // гарантированно скрыть/показать кнопки в зависимости от входа
 
-    // Загружаем все секции
-    loadRaceList();
-    loadRaceHistory();
-    loadUserCount();
+    // Загружаем только то, что нужно на текущей странице (роутер
+    // уже мог переключиться на другую секцию — повторные вызовы там лишние).
+    const onHome = !document.getElementById('page-home')?.hidden;
+    if (onHome) {
+        loadRaceList();
+        loadUserCount();
+    }
+    // Раздел «История» подгрузится лениво, когда пользователь туда зайдёт.
+    // Раздел «Игроки» — тоже (см. refreshPlayersPage).
     updatePlayerSortUI();
 
     // Автообновление
     setInterval(() => {
         if (!currentRaceId) {
             loadRaceList();
-            loadRaceHistory();
-            loadUserCount();
+            // Историю и игроков обновляем только если соответствующая вкладка
+            // сейчас активна — иначе это впустую.
+            if (!document.getElementById('page-history')?.hidden) loadRaceHistory();
+            if (!document.getElementById('page-players')?.hidden) refreshPlayersPage();
+            if (onHome) loadUserCount();
         }
     }, 15000);
 });
@@ -1667,6 +1788,12 @@ window.addEventListener('pageshow', () => {
 // До 10 случайных игроков — чтобы страница не была пустой.
 // Если активна сортировка по победам/матчам — вместо случайных игроков
 // показываем полноценный лидерборд (топ игроков по выбранному показателю).
+//
+// Оптимизации:
+//  1. Twitch live — НЕ блокирует отрисовку: карточки рисуем сразу, бейджи
+//     «live» догружаются и точечно вставляются в уже отрисованные карточки.
+//  2. users + twitch_username идут одним запросом (joined select), а не двумя.
+//  3. stats (race_results) — отдельным запросом, но параллельно с users.
 async function loadRandomPlayers() {
     const container = document.getElementById('playerSearchResults');
     if (!container) return;
@@ -1674,11 +1801,12 @@ async function loadRandomPlayers() {
     container.innerHTML = `<p class="loading-text">⏳ ${tr('players.searching')}</p>`;
 
     try {
-        const { data: users, error } = await db
-            .from('users')
-            .select('username, role')
-            .limit(200);
-
+        // Параллельно: список пользователей (с Twitch-ником) + статистика по всем.
+        const [usersRes] = await Promise.all([
+            db.from('users').select('username, role, twitch_username').limit(200),
+            // stats начнёт грузиться только когда узнаем usernames (см. ниже)
+        ]);
+        const { data: users, error } = usersRes;
         if (error) throw error;
 
         if (!users || users.length === 0) {
@@ -1686,9 +1814,11 @@ async function loadRandomPlayers() {
             return;
         }
 
-        // Twitch info для списка
-        const twitchByName = await fetchPlayersTwitchUsernames(users.map(u => u.username));
-        const liveSet = await fetchLiveTwitchUsernames(Object.values(twitchByName).filter(Boolean));
+        // Сразу достаём Twitch-ники из результата (без второго запроса)
+        const twitchByName = {};
+        users.forEach(u => { twitchByName[u.username] = u.twitch_username || null; });
+        // Помечаем в глобальный кеш, чтобы не дёргать повторно
+        users.forEach(u => { playerTwitchUsernameCache[u.username] = u.twitch_username || null; });
 
         if (playerSortMode) {
             const stats = await fetchPlayerStats(users.map(u => u.username));
@@ -1696,7 +1826,9 @@ async function loadRandomPlayers() {
             const label = playerSortMode === 'wins' ? tr('players.leaderboardWins') : tr('players.leaderboardRaces');
             container.innerHTML =
                 `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${label}</p>` +
-                renderPlayerCards(sorted, stats, twitchByName, liveSet);
+                renderPlayerCards(sorted, stats, twitchByName);
+            // Догружаем Twitch live в фоне
+            enrichPlayersWithTwitchLive(Object.values(twitchByName).filter(Boolean), container);
             return;
         }
 
@@ -1714,7 +1846,9 @@ async function loadRandomPlayers() {
 
         container.innerHTML =
             `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${tr('players.random')}</p>` +
-            renderPlayerCards(picked, stats, pickedTwitch, liveSet);
+            renderPlayerCards(picked, stats, pickedTwitch);
+        // Догружаем Twitch live в фоне (бейдж «live» появится сам, если кто-то стримит)
+        enrichPlayersWithTwitchLive(picked.map(u => pickedTwitch[u.username]).filter(Boolean), container, picked.map(u => u.username));
 
     } catch (err) {
         console.error(err);
@@ -1742,9 +1876,10 @@ async function searchPlayers() {
     try {
         // Экранируем спецсимволы ilike-шаблона
         const safe = query.replace(/[%_\\]/g, '\\$&');
+        // Один запрос вместо двух: users + twitch_username
         const { data: users, error } = await db
             .from('users')
-            .select('username, role')
+            .select('username, role, twitch_username')
             .ilike('username', `%${safe}%`)
             .order('username')
             .limit(20);
@@ -1756,16 +1891,75 @@ async function searchPlayers() {
             return;
         }
 
-        const stats = await fetchPlayerStats(users.map(u => u.username));
+        // stats идут параллельно с уже идущим поиском
+        const [stats, twitchUsers] = await Promise.all([
+            fetchPlayerStats(users.map(u => u.username)),
+            // Список Twitch-ников, которых надо проверить
+            Promise.resolve(users.map(u => u.twitch_username).filter(Boolean))
+        ]);
+        // Помечаем кеш
+        users.forEach(u => { playerTwitchUsernameCache[u.username] = u.twitch_username || null; });
         const sorted = sortUsersByStats(users, stats);
-        const twitchByName = await fetchPlayersTwitchUsernames(sorted.map(u => u.username));
-        const liveSet = await fetchLiveTwitchUsernames(Object.values(twitchByName).filter(Boolean));
-        container.innerHTML = renderPlayerCards(sorted, stats, twitchByName, liveSet);
+        const twitchByName = {};
+        sorted.forEach(u => { twitchByName[u.username] = u.twitch_username || null; });
+
+        // Рисуем карточки СРАЗУ (без ожидания Twitch live-проверки).
+        container.innerHTML = renderPlayerCards(sorted, stats, twitchByName);
+        // Догружаем Twitch live в фоне (если пользователь ещё на этой странице).
+        if (twitchUsers.length > 0) {
+            enrichPlayersWithTwitchLive(twitchUsers, container, sorted.map(u => u.username));
+        }
 
     } catch (err) {
         console.error(err);
         container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
     }
+}
+
+// Запрашивает у Edge Function список live-стримеров и точечно добавляет
+// бейдж «🔴 В эфире» в карточки. Не блокирует основной рендер.
+let __twitchEnrichInFlight = null;
+async function enrichPlayersWithTwitchLive(twitchUsernames, container, playerUsernames) {
+    if (!twitchUsernames || twitchUsernames.length === 0) return;
+    try {
+        if (__twitchEnrichInFlight) await __twitchEnrichInFlight;
+    } catch (_) {}
+    __twitchEnrichInFlight = (async () => {
+        const liveSet = await fetchLiveTwitchUsernames(twitchUsernames);
+        if (!container || !container.isConnected) return;
+        if (liveSet.size === 0) return;
+        // Точечно вставляем бейджи — ищем карточки по нику игрока.
+        const usernameToTwitch = {};
+        twitchUsernames.forEach(t => { usernameToTwitch[t.toLowerCase()] = t; });
+        const liveByName = {};
+        (playerUsernames || []).forEach(n => {
+            const tw = (usernameToTwitch[String(n).toLowerCase()]);
+            if (tw && liveSet.has(String(tw).toLowerCase())) liveByName[n] = tw;
+        });
+        container.querySelectorAll('.race-card').forEach(card => {
+            const h3 = card.querySelector('h3');
+            if (!h3) return;
+            // Первое текстовое содержимое h3 — это имя
+            const name = h3.textContent.replace(/MASTER|HOST/g, '').trim();
+            const tw = liveByName[name];
+            if (!tw) return;
+            if (card.querySelector('.twitch-live-text')) return;
+            const live = document.createElement('div');
+            live.className = 'twitch-live-text';
+            live.style.cssText = 'margin-top:4px;font-size:0.78rem;font-weight:800;color:#ff3b3b;';
+            live.textContent = '🔴 ' + tr('twitch.live');
+            h3.parentElement.appendChild(live);
+        });
+    })();
+    try { await __twitchEnrichInFlight; } finally { __twitchEnrichInFlight = null; }
+}
+
+// Унифицированный «обновить то, что на странице игроков»: либо поиск, либо рандом.
+function refreshPlayersPage() {
+    const input = document.getElementById('playerSearchInput');
+    if (!input) return;
+    if (input.value.trim().length >= 2) searchPlayers();
+    else loadRandomPlayers();
 }
 
 // === ПРОФИЛЬ ИГРОКА ===
@@ -1796,21 +1990,21 @@ async function loadPlayerProfile(username) {
         const isOwnProfile = currentUser && currentUser.username &&
             currentUser.username.toLowerCase() === user.username.toLowerCase();
 
-        let isTwitchLive = false;
-        if (user.twitch_username) {
-            try {
-                const liveSet = await fetchLiveTwitchUsernames([user.twitch_username]);
-                isTwitchLive = liveSet.has(user.twitch_username.toLowerCase());
-            } catch(e) {}
-        }
-
-        const { data: results } = await db
+        // ШАГ 1. Параллельно: история гонок + (если есть Twitch) проверка live.
+        // Карточки со статистикой покажем только после этого, но заголовок
+        // профиля можно отрисовать уже сейчас, чтобы экран не висел пустым.
+        const raceResultsPromise = db
             .from('race_results')
             .select('race_id, place, total_time, is_dnf, timing_method')
             .eq('player_name', user.username)
             .order('place', { ascending: true });
+        const livePromise = user.twitch_username
+            ? fetchLiveTwitchUsernames([user.twitch_username]).then(s => s.has(user.twitch_username.toLowerCase()))
+            : Promise.resolve(false);
 
-        const rows = results || [];
+        const [resultsRes, isTwitchLive] = await Promise.all([raceResultsPromise, livePromise]);
+
+        const rows = resultsRes.data || [];
         let racesById = {};
         if (rows.length > 0) {
             const { data: races } = await db

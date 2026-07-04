@@ -81,13 +81,23 @@
 
             case 'history':
                 showPage('history');
+                // Подгружаем историю лениво: только если мы тут впервые
+                // (или после возврата). Не вызываем, если DOMContentLoaded
+                // уже загрузил её ранее — но DOMContentLoaded больше не
+                // делает этого сам, так что первый заход = здесь.
                 if (typeof loadRaceHistory === 'function') loadRaceHistory();
                 break;
 
             case 'players':
                 showPage('players');
-                // показать результаты поиска или случайных игроков
-                if (typeof searchPlayers === 'function') searchPlayers();
+                // Показываем «случайных» только при первом заходе на страницу.
+                // Если в инпуте уже что-то напечатано (например, вернулись
+                // назад через hashchange) — отрабатываем как обычный поиск.
+                if (typeof refreshPlayersPage === 'function') {
+                    refreshPlayersPage();
+                } else if (typeof searchPlayers === 'function') {
+                    searchPlayers();
+                }
                 break;
 
             case 'profile':

@@ -76,6 +76,14 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+    }
+}
 
 body {
     font-family: 'Nunito', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -164,6 +172,20 @@ a { color: inherit; }
 /* SPA pages */
 .page[hidden] { display: none !important; }
 .btn-back { font-weight: 800; }
+
+/*
+  content-visibility:auto отдаёт браузеру подсказку пропускать layout/paint
+  для секций, которые сейчас за пределами viewport. Для одностраничного
+  приложения с длинным DOM (список гонок, история, профили) это сильно
+  ускоряет LCP/INP на первой отрисовке. contain-intrinsic-size нужен,
+  чтобы скроллбар не «прыгал» при открытии страницы.
+*/
+.page > .container,
+.page > .main-header,
+.page > .home-footer {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 800px;
+}
 
 .nav-right > span {
     font-weight: 800;

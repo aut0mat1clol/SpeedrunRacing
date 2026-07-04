@@ -6,11 +6,18 @@
     <title>SpeedRun Race Tracker</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800;900&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+    <!--
+      Nunito: догружаем в фоне (не блокируем рендер).
+      display=swap уже есть — оставляем; на главной странице шрифт появится после загрузки.
+      Перед preconnect подсказкой: critical CSS не зависит от шрифта, всё ок.
+    -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800;900&family=JetBrains+Mono:wght@600;700&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800;900&family=JetBrains+Mono:wght@600;700&display=swap"></noscript>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23131a10' width='100' height='100' rx='22'/><path d='M22 72 L50 26 L78 72' stroke='%236aad38' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
     <script>(function(){var t=localStorage.getItem('srt-theme')||'dark';document.documentElement.setAttribute('data-theme',t);var l=localStorage.getItem('srt-lang')||'ru';document.documentElement.setAttribute('lang',l);})();</script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- supabase-js — грузим с defer, чтобы не блокировать FCP; createClient подождёт DOMContentLoaded -->
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -47,7 +54,7 @@
                 <div class="header-stats">
                     <div class="stat"><div class="stat-value">⚡</div><div class="stat-label" data-i18n="home.stat.timer">Live‑таймер</div></div>
                     <div class="stat"><div class="stat-value">🏁</div><div class="stat-label" data-i18n="home.stat.splits">Сплиты</div></div>
-                    <div class="stat"><div class="stat-value" id="statUserCount">∞</div><div class="stat-label" data-i18n="home.stat.players">Игроков</div></div>
+                    <div class="stat"><div class="stat-value" id="statUserCount">0</div><div class="stat-label" data-i18n="home.stat.players">Игроков</div></div>
                 </div>
                 <div style="margin-top:2.25rem;">
                     <a href="#races" class="btn btn-primary" style="font-size:1.05rem;padding:14px 30px;" data-i18n="home.cta">Посмотреть гонки →</a>
@@ -289,10 +296,15 @@
     </div>
 </div>
 
-    <script src="theme.js"></script>
-    <script src="i18n.js"></script>
-    <script src="config.js"></script>
-    <script src="app.js"></script>
-    <script src="router.js"></script>
+    <!--
+      Все скрипты — defer: парсятся параллельно, выполняются после парсинга HTML
+      в порядке объявления. Это даёт намного более быстрый FCP/LCP.
+      config.js (если есть) должен идти до app.js — он у тебя и так раньше.
+    -->
+    <script defer src="theme.js"></script>
+    <script defer src="i18n.js"></script>
+    <script defer src="config.js"></script>
+    <script defer src="app.js"></script>
+    <script defer src="router.js"></script>
 </body>
 </html>
