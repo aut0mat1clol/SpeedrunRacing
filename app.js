@@ -337,7 +337,7 @@ async function loadRaceList() {
 
         container.innerHTML = races.map(race => `
             <div class="race-card" onclick="location.hash='#race/${race.id}'">
-                <h3>${race.name || race.id}</h3>
+                <h3>${race.name || race.id} ${race.timing_method === 'GameTime' ? '<span style="font-size:0.65rem;color:#ffd93d;border:1px solid #ffd93d;border-radius:5px;padding:1px 5px;vertical-align:middle;">GT</span>' : ''}</h3>
                 <div class="meta">${race.game} — ${race.category}</div>
                 <span class="status ${race.status}">
                     ${statusLabel(race.status)}
@@ -402,6 +402,23 @@ function updateRaceUI(race) {
     document.getElementById('raceGame').textContent     = race.game     || 'Unknown Game';
     document.getElementById('raceCategory').textContent = race.category || '---';
     document.getElementById('raceName').textContent     = race.name     || race.id;
+
+    // Бейдж метода времени + предупреждение про Compare Against → Game Time.
+    const timingBadge = document.getElementById('raceTimingBadge');
+    const gtWarning    = document.getElementById('raceGameTimeWarning');
+    const isGameTimeRace = race.timing_method === 'GameTime';
+    if (timingBadge) {
+        if (isGameTimeRace) {
+            timingBadge.style.display = '';
+            timingBadge.innerHTML = `<span style="font-size:0.8rem;font-weight:800;color:#ffd93d;">⏱ ${tr('create.timingMethod.gameTime')}</span>`;
+        } else {
+            timingBadge.style.display = 'none';
+            timingBadge.innerHTML = '';
+        }
+    }
+    if (gtWarning) {
+        gtWarning.style.display = isGameTimeRace ? 'flex' : 'none';
+    }
 
     const raceNameEl = document.getElementById('raceName');
     if (raceNameEl) {
@@ -574,12 +591,8 @@ function syncPlayerAnchor(p) {
         delete liveTimeAnchors[id];
         return;
     }
-    // Game Time компонент шлёт статично — живой счёт не ведём.
-    if (p.timing_method === 'GameTime') {
-        delete liveTimeAnchors[id];
-        return;
-    }
 
+    const isGameTime = p.timing_method === 'GameTime';
     const reported = Number(p.total_time) || 0;
     const prev = liveTimeAnchors[id];
 
@@ -587,13 +600,19 @@ function syncPlayerAnchor(p) {
     // из LiveSplit (компонент обновил total_time). Небольшой дребезг (<150мс)
     // между «нашим» расчётом и присланным значением игнорируем, чтобы цифры
     // не «дёргались» назад на каждом апдейте.
+    //
+    // Для Game Time компонент шлёт total_time каждые ~250мс, поэтому между
+    // апдейтами мы дорисовываем время линейно (как и для Real Time) — если
+    // в LiveSplit сейчас идёт загрузка/пауза, следующий апдейт просто придёт
+    // с тем же значением и якорь переустановится без скачка.
     if (!prev) {
         liveTimeAnchors[id] = { time: reported, at: Date.now() };
         return;
     }
     const ourEstimate = prev.time + (Date.now() - prev.at);
     const drift = Math.abs(ourEstimate - reported);
-    if (reported !== prev.time || drift > 150) {
+    const driftThreshold = isGameTime ? 400 : 150;
+    if (reported !== prev.time || drift > driftThreshold) {
         liveTimeAnchors[id] = { time: reported, at: Date.now() };
     }
 }
@@ -682,8 +701,10 @@ function updatePlayersGrid(players, readyMap) {
         const isGameTime = p.timing_method === 'GameTime';
 
         if (p.status === 'racing') {
-            if (isGameTime) {
-                // Game Time — показываем последнее известное время (статично)
+            if (isGameTime && !liveTimeAnchors[p.id]) {
+                // Game Time, но ещё не пришло ни одного обновления от
+                // компонента (например, только что стартовали) — показываем
+                // последнее известное значение статично.
                 timeDisplay = `
                     <div class="player-time game-time">
                         <span style="font-size:0.75rem;color:#ffd93d;">GT</span> 
@@ -691,10 +712,14 @@ function updatePlayersGrid(players, readyMap) {
                     </div>
                 `;
             } else if (liveTimeAnchors[p.id] || raceStart) {
-                // Real Time — показываем живой таймер, синхронизированный с LiveSplit.
+                // Живой таймер, синхронизированный с LiveSplit — работает как
+                // для Real Time, так и для Game Time (компонент шлёт точное
+                // total_time несколько раз в секунду, здесь только плавно
+                // дорисовываем время между этими апдейтами).
                 const initial = getLivePlayerTime(p.id, raceStart);
                 timeDisplay = `
                     <div class="player-time racing-live" data-player-id="${p.id}">
+                        ${isGameTime ? '<span style="font-size:0.75rem;color:#ffd93d;">GT</span> ' : ''}
                         <span class="live-time">${formatTime(initial)}</span>
                     </div>
                 `;
@@ -742,11 +767,11 @@ function updatePlayersGrid(players, readyMap) {
         </div>`;
     }).join('');
 
-    // Запускаем живой таймер, если есть racing игроки с Real Time
-    // (либо уже есть якорь из LiveSplit, либо известен старт гонки).
+    // Запускаем живой таймер, если есть racing игроки (Real Time или
+    // Game Time — компонент шлёт точные апдейты для обоих режимов), у
+    // которых уже есть якорь из LiveSplit, либо известен старт гонки.
     const hasRacing = sorted.some(p =>
         p.status === 'racing' &&
-        p.timing_method !== 'GameTime' &&
         (liveTimeAnchors[p.id] || raceStart)
     );
     if (hasRacing) {
@@ -843,8 +868,22 @@ function showCreateRace() {
     
     // Генерируем красивый ID
     generateNewRaceId();
+
+    // Сбрасываем метод времени на Real Time по умолчанию и прячем предупреждение
+    const timingSelect = document.getElementById('newRaceTimingMethod');
+    if (timingSelect) timingSelect.value = 'RealTime';
+    onTimingMethodChange();
     
     document.getElementById('newRaceGame').focus();
+}
+
+// Показ/скрытие предупреждения о Game Time при выборе метода времени
+// в форме создания гонки.
+function onTimingMethodChange() {
+    const select  = document.getElementById('newRaceTimingMethod');
+    const warning = document.getElementById('gameTimeWarning');
+    if (!select || !warning) return;
+    warning.style.display = select.value === 'GameTime' ? 'flex' : 'none';
 }
 
 function generateNewRaceId() {
@@ -862,17 +901,28 @@ function closeCreateRace() {
     ['newRaceId','newRaceName','newRaceGame','newRaceCategory'].forEach(id => {
         document.getElementById(id).value = '';
     });
+    const timingSelect = document.getElementById('newRaceTimingMethod');
+    if (timingSelect) timingSelect.value = 'RealTime';
+    onTimingMethodChange();
 }
 
 async function createRace() {
     if (!currentUser) return;
     
-    const id       = document.getElementById('newRaceId').value.trim();
-    const name     = document.getElementById('newRaceName').value.trim();
-    const game     = document.getElementById('newRaceGame').value.trim();
-    const category = document.getElementById('newRaceCategory').value.trim();
+    const id            = document.getElementById('newRaceId').value.trim();
+    const name          = document.getElementById('newRaceName').value.trim();
+    const game          = document.getElementById('newRaceGame').value.trim();
+    const category      = document.getElementById('newRaceCategory').value.trim();
+    const timingSelect  = document.getElementById('newRaceTimingMethod');
+    const timingMethod  = timingSelect ? timingSelect.value : 'RealTime';
 
     if (!id || !game) { alert(tr('alert.requiredRace')); return; }
+
+    // Если организатор выбрал Game Time — ещё раз явно предупреждаем перед
+    // созданием гонки, чтобы это не потерялось.
+    if (timingMethod === 'GameTime' && !confirm(tr('create.timingMethod.confirm'))) {
+        return;
+    }
 
     const { error } = await db.from('races').insert({
         id,
@@ -880,6 +930,7 @@ async function createRace() {
         game,
         category: category || 'Any%',
         status:   'waiting',
+        timing_method: timingMethod,
         created_by: currentUser.id   // ← сохраняем владельца
     });
 

@@ -40,6 +40,7 @@
             'race.countdown.15': '15 сек',
             'race.countdown.30': '30 сек',
             'race.delete': '🗑️ Удалить гонку',
+            'race.gameTimeWarning': 'Эта гонка использует Game Time. Перед подключением обязательно выберите в LiveSplit «Compare Against → Game Time», иначе ваше время будет засчитано неверно.',
             'race.readyTitle': 'Готовность участников',
             'race.readyText': 'Готовы:',
             'race.results': 'Результаты',
@@ -102,6 +103,11 @@
             'create.namePlaceholder': 'Название гонки (Необязательно)',
             'create.gamePlaceholder': 'Название игры',
             'create.categoryPlaceholder': 'например: Any%',
+            'create.timingMethod': 'Метод времени',
+            'create.timingMethod.realTime': 'Real Time',
+            'create.timingMethod.gameTime': 'Game Time',
+            'create.timingMethod.warning': 'Внимание! Если выбран Game Time, каждый участник обязан заранее, ещё до подключения к гонке, выбрать в LiveSplit «Compare Against → Game Time». Иначе время будет учитываться неправильно.',
+            'create.timingMethod.confirm': 'Вы выбрали Game Time. Убедитесь, что все участники предупреждены и выберут в LiveSplit «Compare Against → Game Time» перед подключением. Продолжить создание гонки?',
             'create.submit': 'Создать',
 
             // Dynamic app.js strings
@@ -184,6 +190,7 @@
             'race.countdown.15': '15 sec',
             'race.countdown.30': '30 sec',
             'race.delete': '🗑️ Delete race',
+            'race.gameTimeWarning': 'This race uses Game Time. Before joining, make sure to set “Compare Against → Game Time” in LiveSplit, otherwise your time won\'t be tracked correctly.',
             'race.readyTitle': 'Participant readiness',
             'race.readyText': 'Ready:',
             'race.results': 'Results',
@@ -246,6 +253,11 @@
             'create.namePlaceholder': 'Race name (Optional)',
             'create.gamePlaceholder': 'Game title',
             'create.categoryPlaceholder': 'for example: Any%',
+            'create.timingMethod': 'Timing method',
+            'create.timingMethod.realTime': 'Real Time',
+            'create.timingMethod.gameTime': 'Game Time',
+            'create.timingMethod.warning': 'Warning! If Game Time is selected, every participant must set “Compare Against → Game Time” in LiveSplit before joining the race. Otherwise their time will be tracked incorrectly.',
+            'create.timingMethod.confirm': 'You selected Game Time. Make sure all participants are aware and set “Compare Against → Game Time” in LiveSplit before joining. Continue creating the race?',
             'create.submit': 'Create',
 
             // Dynamic app.js strings

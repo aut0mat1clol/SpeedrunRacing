@@ -91,6 +91,7 @@
                 <div>
                     <h1 id="raceName">—</h1>
                     <p id="raceMeta"><span id="raceGame"></span> · <span id="raceCategory"></span></p>
+                    <p id="raceTimingBadge" style="display:none;"></p>
                 </div>
                 <div id="raceStatusBadge" class="status-badge waiting">
                     <span id="raceStatus" class="status-badge waiting" style="display:none;"></span>
@@ -112,6 +113,10 @@
                     </select>
                 </label>
                 <button class="btn btn-danger btn-host-delete" id="hostDeleteBtn" onclick="hostDeleteRace()" style="display:none;margin-left:auto;" data-i18n="race.delete">🗑️ Удалить гонку</button>
+            </div>
+
+            <div class="modal-warning" id="raceGameTimeWarning" style="display:none;margin-bottom:1rem;">
+                ⚠️ <span data-i18n="race.gameTimeWarning">Эта гонка использует Game Time. Перед подключением обязательно выберите в LiveSplit «Compare Against → Game Time», иначе ваше время будет засчитано неверно.</span>
             </div>
 
             <div class="ready-count">
@@ -240,6 +245,17 @@
             <input class="modal-input" id="newRaceGame" placeholder="Название игры" data-i18n-placeholder="create.gamePlaceholder">
             <label for="newRaceCategory" data-i18n="create.category">Категория</label>
             <input class="modal-input" id="newRaceCategory" placeholder="например: Any%" data-i18n-placeholder="create.categoryPlaceholder">
+
+            <label for="newRaceTimingMethod" data-i18n="create.timingMethod">Метод времени</label>
+            <select class="modal-input" id="newRaceTimingMethod" onchange="onTimingMethodChange()">
+                <option value="RealTime" data-i18n="create.timingMethod.realTime">Real Time</option>
+                <option value="GameTime" data-i18n="create.timingMethod.gameTime">Game Time</option>
+            </select>
+
+            <div class="modal-warning" id="gameTimeWarning" style="display:none;">
+                ⚠️ <span data-i18n="create.timingMethod.warning">Внимание! Если выбран Game Time, каждый участник обязан заранее, ещё до подключения к гонке, выбрать в LiveSplit «Compare Against → Game Time». Иначе время будет учитываться неправильно.</span>
+            </div>
+
             <div class="modal-actions">
                 <button class="btn btn-ghost" onclick="closeCreateRace()" data-i18n="auth.cancel">Отмена</button>
                 <button class="btn btn-primary" onclick="createRace()" data-i18n="create.submit">Создать</button>

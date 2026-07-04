@@ -862,6 +862,21 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
 .modal-hint { color: var(--text-dim); font-weight: 600; font-size: .9rem; margin-bottom: 1rem; }
 .modal-hint strong { color: var(--primary); }
 
+.modal-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: color-mix(in srgb, #ffd93d 16%, transparent);
+    border: 1px solid color-mix(in srgb, #ffd93d 45%, transparent);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: .85rem;
+    line-height: 1.35;
+    margin-bottom: 14px;
+}
+
 /* ============================================================
    TOAST
    ============================================================ */
