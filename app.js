@@ -10,6 +10,11 @@ const HOST_PASSWORD     = window.HOST_PASSWORD     || 'speedrun2025';
 const { createClient } = window.supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// URL безопасной Edge Function, которая проверяет через Twitch API,
+// кто из игроков сейчас реально стримит (Client Secret хранится только
+// на сервере, в браузер он никогда не попадает).
+const TWITCH_LIVE_FN_URL = `${SUPABASE_URL}/functions/v1/bright-task`;
+
 // ── Состояние ────────────────────────────────────────────────
 let currentRaceId     = null;
 let currentPlayerId   = null;
@@ -277,6 +282,118 @@ function switchAuthTab(tab) {
 }
 
 // ============================================================
+// TWITCH — настройки в профиле
+// ============================================================
+
+// Приводим ввод пользователя к чистому нику канала: снимаем случайно
+// вставленную ссылку (twitch.tv/nick), пробелы и приводим к нижнему регистру.
+function normalizeTwitchUsername(raw) {
+    if (!raw) return '';
+    let v = raw.trim();
+    const m = v.match(/twitch\.tv\/([a-zA-Z0-9_]+)/i);
+    if (m) v = m[1];
+    v = v.replace(/^@/, '').trim().toLowerCase();
+    return v;
+}
+
+// Сохранение Twitch-ника прямо из страницы профиля
+async function saveProfileTwitch() {
+    if (!currentUser) { showAuthModal(); return; }
+
+    const input = document.getElementById('profileTwitchInput');
+    const msgEl = document.getElementById('profileTwitchSaveMsg');
+    const raw = input ? input.value : '';
+    const twitch = normalizeTwitchUsername(raw);
+
+    if (twitch && !/^[a-zA-Z0-9_]{2,25}$/.test(twitch)) {
+        showToast(tr('profileSettings.err.invalid'));
+        if (input) input.focus();
+        return;
+    }
+
+    try {
+        const { error } = await db
+            .from('users')
+            .update({ twitch_username: twitch || null })
+            .eq('id', currentUser.id);
+
+        if (error) throw error;
+
+        // обновляем кэш twitch-ников, чтобы live-бейджи сразу подхватили новое имя
+        if (currentUser.username) {
+            playerTwitchUsernameCache[currentUser.username] = twitch || null;
+        }
+
+        showToast(tr('profileSettings.saved'));
+        if (msgEl) {
+            msgEl.textContent = tr('profile.twitchSaved');
+            msgEl.style.display = '';
+            setTimeout(() => { msgEl.style.display = 'none'; }, 2000);
+        }
+        // перезагружаем профиль, чтобы обновить ссылку
+        loadPlayerProfile(currentUser.username);
+    } catch (err) {
+        console.error(err);
+        showToast(tr('profileSettings.err.save') + (err.message || ''));
+    }
+}
+
+// ============================================================
+// TWITCH — проверка live-статуса через безопасную Edge Function
+// ============================================================
+
+// Кэш последнего ответа, чтобы не спамить функцию при частых перерисовках.
+let twitchLiveCache = { at: 0, live: new Set() };
+const TWITCH_LIVE_CACHE_TTL = 20000; // 20 секунд
+
+// Возвращает Set() ников (в нижнем регистре), которые сейчас live на Twitch.
+// usernames — произвольный список твич-ников для проверки.
+async function fetchLiveTwitchUsernames(usernames) {
+    const clean = [...new Set((usernames || [])
+        .filter(Boolean)
+        .map(u => String(u).toLowerCase()))];
+
+    if (clean.length === 0) return new Set();
+
+    const now = Date.now();
+    if (now - twitchLiveCache.at < TWITCH_LIVE_CACHE_TTL) {
+        return twitchLiveCache.live;
+    }
+
+    try {
+        const resp = await fetch(TWITCH_LIVE_FN_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'apikey': SUPABASE_ANON_KEY
+            },
+            body: JSON.stringify({ usernames: clean })
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const live = new Set((data.live || []).map(u => String(u).toLowerCase()));
+        twitchLiveCache = { at: now, live };
+        return live;
+    } catch (e) {
+        console.warn('[twitch] Не удалось проверить live-статус:', e);
+        return twitchLiveCache.live; // отдаём последнее известное, если запрос не удался
+    }
+}
+
+function twitchWatchButtonHtml(twitchUsername, extraStyle) {
+    if (!twitchUsername) return '';
+    const url = `https://twitch.tv/${encodeURIComponent(twitchUsername)}`;
+    return `
+        <a href="${url}" target="_blank" rel="noopener noreferrer"
+           onclick="event.stopPropagation();"
+           class="twitch-live-badge" style="${extraStyle || ''}"
+           title="${tr('twitch.watchTitle')}">
+            🔴 ${tr('twitch.watch')}
+        </a>`;
+}
+
+// ============================================================
 // ЭКРАНЫ
 // ============================================================
 
@@ -286,6 +403,7 @@ function showRaceList() {
     currentRaceId      = null;
     autoStartTriggered = false;
     if (realtimeChannel) { db.removeChannel(realtimeChannel); realtimeChannel = null; }
+    stopTwitchLiveWatcher();
     loadRaceList();
 }
 
@@ -307,6 +425,28 @@ function showRaceScreen(raceId) {
     // Принудительно загружаем данные (включая started_at)
     loadRaceData();
     setupRealtimeListeners();
+    startTwitchLiveWatcher();
+}
+
+// Периодически (независимо от realtime-обновлений players/races)
+// перепроверяем, не начал ли/не закончил ли кто-то из участников стрим
+// на Twitch. Список игроков берём из уже загруженной сетки на странице.
+let twitchLiveWatcherInterval = null;
+function startTwitchLiveWatcher() {
+    stopTwitchLiveWatcher();
+    twitchLiveWatcherInterval = setInterval(async () => {
+        if (!currentRaceId) return;
+        try {
+            const { data: players } = await db.from('players').select('id, name').eq('race_id', currentRaceId);
+            if (players && players.length > 0) attachTwitchInfoToPlayers(players);
+        } catch (e) { /* необязательно */ }
+    }, 20000);
+}
+function stopTwitchLiveWatcher() {
+    if (twitchLiveWatcherInterval) {
+        clearInterval(twitchLiveWatcherInterval);
+        twitchLiveWatcherInterval = null;
+    }
 }
 
 // ============================================================
@@ -457,6 +597,29 @@ function updateRaceUI(race) {
     }
 }
 
+// Кэш ников Twitch участников по имени игрока, чтобы не дёргать users
+// на каждое обновление гонки (сплиты приходят часто через realtime).
+const playerTwitchUsernameCache = {}; // playerName -> twitchUsername|null
+
+async function fetchPlayersTwitchUsernames(playerNames) {
+    const unknown = [...new Set(playerNames)].filter(n => !(n in playerTwitchUsernameCache));
+    if (unknown.length > 0) {
+        try {
+            const { data } = await db
+                .from('users')
+                .select('username, twitch_username')
+                .in('username', unknown);
+            unknown.forEach(n => { playerTwitchUsernameCache[n] = null; }); // отметим как проверенные
+            (data || []).forEach(u => {
+                playerTwitchUsernameCache[u.username] = u.twitch_username || null;
+            });
+        } catch (e) { /* необязательно */ }
+    }
+    const result = {};
+    playerNames.forEach(n => { result[n] = playerTwitchUsernameCache[n] || null; });
+    return result;
+}
+
 async function loadPlayers() {
     if (!currentRaceId) return;
     try {
@@ -468,7 +631,12 @@ async function loadPlayers() {
         const readyMap = {};
         (readyRes.data || []).forEach(r => { readyMap[r.player_id] = r.ready; });
 
+        // Twitch: узнаём привязанные ники участников и кто из них сейчас live.
+        // Не блокируем основной рендер карточек — сначала рисуем без Twitch,
+        // затем, когда данные придут, перерисовываем ту же сетку.
         updatePlayersGrid(players, readyMap);
+        attachTwitchInfoToPlayers(players, readyMap);
+
         updateReadyCount(players.length, players.filter(p => readyMap[p.id]).length);
         document.getElementById('lastUpdated').textContent =
             tr('common.updated') + ' ' + new Date().toLocaleTimeString((typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU');
@@ -627,6 +795,68 @@ function getLivePlayerTime(playerId, raceStartFallback) {
     return 0;
 }
 
+// playerId -> twitch_username, только для тех, кто СЕЙЧАС стримит live.
+// Заполняется отдельно (см. attachTwitchInfoToPlayers), обновляет карточки
+// уже отрисованной сетки без полной перезагрузки данных гонки.
+let livePlayerTwitch = {};
+
+// Узнаём Twitch-ники участников гонки и, если они есть, спрашиваем у
+// Edge Function, кто из них сейчас реально стримит. Обновляем только
+// маленькие Twitch-бейджи на уже отрисованных карточках (не трогаем
+// таймеры/сплиты, чтобы не мешать живому обновлению).
+let twitchCheckInProgress = false;
+async function attachTwitchInfoToPlayers(players) {
+    if (twitchCheckInProgress) return;
+    twitchCheckInProgress = true;
+    try {
+        const names = players.map(p => p.name).filter(Boolean);
+        if (names.length === 0) { livePlayerTwitch = {}; return; }
+
+        const twitchByName = await fetchPlayersTwitchUsernames(names);
+        const twitchUsernames = Object.values(twitchByName).filter(Boolean);
+
+        if (twitchUsernames.length === 0) {
+            livePlayerTwitch = {};
+            return;
+        }
+
+        const liveSet = await fetchLiveTwitchUsernames(twitchUsernames);
+
+        const next = {};
+        players.forEach(p => {
+            const tw = twitchByName[p.name];
+            if (tw && liveSet.has(tw.toLowerCase())) next[p.id] = tw;
+        });
+        livePlayerTwitch = next;
+
+        updateTwitchBadgesInGrid();
+    } catch (e) {
+        console.warn('[twitch] Ошибка получения live-статуса участников:', e);
+    } finally {
+        twitchCheckInProgress = false;
+    }
+}
+
+// Точечно обновляем/добавляем/убираем Twitch-бейдж в уже существующих
+// карточках игроков, не перерисовывая всю сетку (чтобы не сбивать
+// анимацию живого таймера).
+function updateTwitchBadgesInGrid() {
+    document.querySelectorAll('.player-card[data-player-id]').forEach(card => {
+        const playerId = card.getAttribute('data-player-id');
+        const existing = card.querySelector('.twitch-live-badge');
+        const twitchUsername = livePlayerTwitch[playerId];
+
+        if (twitchUsername) {
+            if (!existing) {
+                const header = card.querySelector('.player-header');
+                if (header) header.insertAdjacentHTML('afterend', twitchWatchButtonHtml(twitchUsername));
+            }
+        } else if (existing) {
+            existing.remove();
+        }
+    });
+}
+
 function updatePlayersGrid(players, readyMap) {
     const grid = document.getElementById('playersGrid');
 
@@ -736,8 +966,10 @@ function updatePlayersGrid(players, readyMap) {
             timeDisplay = `<div class="player-time">—</div>`;
         }
 
+        const liveTwitch = livePlayerTwitch[p.id] || null;
+
         return `
-        <div class="player-card ${p.status || 'ready'} ${isMe ? 'current-player' : ''}">
+        <div class="player-card ${p.status || 'ready'} ${isMe ? 'current-player' : ''}" data-player-id="${p.id}">
             <div class="player-header">
                 <div class="player-name">
                     ${p.name}
@@ -750,6 +982,8 @@ function updatePlayersGrid(players, readyMap) {
                     </span>
                 </div>
             </div>
+
+            ${twitchWatchButtonHtml(liveTwitch)}
 
             ${timeDisplay}
 
@@ -1344,24 +1578,31 @@ function sortUsersByStats(users, stats) {
 }
 
 // Отрисовка карточек игроков (общая для поиска и случайного списка)
-function renderPlayerCards(users, stats) {
+function renderPlayerCards(users, stats, twitchByName = {}, liveSet = new Set()) {
     return '<div style="display:flex;flex-direction:column;gap:0.5rem;">' +
         users.map(u => {
             const name = escapeHtml(u.username);
             const roleBadge = u.role === 'master-host' ? ' <span style="font-size:0.65rem;color:#e0503f;font-weight:900;">MASTER</span>'
                 : u.role === 'host' ? ' <span style="font-size:0.65rem;color:#e8a830;font-weight:900;">HOST</span>' : '';
             const s = stats[u.username] || { races: 0, wins: 0 };
+            const tw = twitchByName[u.username] || null;
+            const isLive = tw && liveSet.has(String(tw).toLowerCase());
+            const twitchHtml = isLive
+                ? `<div style="margin-top:4px;font-size:0.78rem;font-weight:800;color:#ff3b3b;">🔴 ${tr('twitch.live')}</div>`
+                : '';
             return `
                 <div class="race-card" onclick="location.hash='#profile/${encodeURIComponent(u.username)}'" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
-                    <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
-                    <div style="display:flex;gap:10px;white-space:nowrap;">
+                    <div style="min-width:0;flex:1;">
+                        <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
+                        ${twitchHtml}
+                    </div>
+                    <div style="display:flex;gap:10px;white-space:nowrap;align-items:center;">
                         <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:#ffd93d;font-size:0.85rem;" title="${tr('players.winsTitle')}">🥇 ${s.wins}</span>
                         <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:var(--text-dim);font-size:0.85rem;" title="${tr('players.racesTitle')}">🏁 ${s.races}</span>
                     </div>
                 </div>`;
         }).join('') + '</div>';
 }
-
 
 // Защита от автозаполнения браузером: если в поле поиска что-то
 // «само» появилось до того, как пользователь начал печатать — очищаем.
@@ -1437,13 +1678,17 @@ async function loadRandomPlayers() {
             return;
         }
 
+        // Twitch info для списка
+        const twitchByName = await fetchPlayersTwitchUsernames(users.map(u => u.username));
+        const liveSet = await fetchLiveTwitchUsernames(Object.values(twitchByName).filter(Boolean));
+
         if (playerSortMode) {
             const stats = await fetchPlayerStats(users.map(u => u.username));
             const sorted = sortUsersByStats(users, stats).slice(0, 30);
             const label = playerSortMode === 'wins' ? tr('players.leaderboardWins') : tr('players.leaderboardRaces');
             container.innerHTML =
                 `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${label}</p>` +
-                renderPlayerCards(sorted, stats);
+                renderPlayerCards(sorted, stats, twitchByName, liveSet);
             return;
         }
 
@@ -1456,10 +1701,12 @@ async function loadRandomPlayers() {
         const picked = shuffled.slice(0, 10);
 
         const stats = await fetchPlayerStats(picked.map(u => u.username));
+        const pickedTwitch = {};
+        picked.forEach(u => { pickedTwitch[u.username] = twitchByName[u.username] || null; });
 
         container.innerHTML =
             `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${tr('players.random')}</p>` +
-            renderPlayerCards(picked, stats);
+            renderPlayerCards(picked, stats, pickedTwitch, liveSet);
 
     } catch (err) {
         console.error(err);
@@ -1503,7 +1750,9 @@ async function searchPlayers() {
 
         const stats = await fetchPlayerStats(users.map(u => u.username));
         const sorted = sortUsersByStats(users, stats);
-        container.innerHTML = renderPlayerCards(sorted, stats);
+        const twitchByName = await fetchPlayersTwitchUsernames(sorted.map(u => u.username));
+        const liveSet = await fetchLiveTwitchUsernames(Object.values(twitchByName).filter(Boolean));
+        container.innerHTML = renderPlayerCards(sorted, stats, twitchByName, liveSet);
 
     } catch (err) {
         console.error(err);
@@ -1523,10 +1772,10 @@ async function loadPlayerProfile(username) {
     container.innerHTML = `<p class="loading-text">⏳ ${tr('profile.loading')}</p>`;
 
     try {
-        // 1) Пользователь (точное совпадение ника без учёта регистра)
+        // 1) Пользователь
         const { data: user, error: userErr } = await db
             .from('users')
-            .select('username, role')
+            .select('username, role, twitch_username')
             .ilike('username', username.replace(/[%_\\]/g, '\\$&'))
             .limit(1)
             .maybeSingle();
@@ -1537,7 +1786,19 @@ async function loadPlayerProfile(username) {
             return;
         }
 
-        // 2) Все результаты игрока из снимков завершённых гонок
+        const isOwnProfile = currentUser && currentUser.username &&
+            currentUser.username.toLowerCase() === user.username.toLowerCase();
+
+        // Twitch live check
+        let isTwitchLive = false;
+        if (user.twitch_username) {
+            try {
+                const liveSet = await fetchLiveTwitchUsernames([user.twitch_username]);
+                isTwitchLive = liveSet.has(user.twitch_username.toLowerCase());
+            } catch(e) {}
+        }
+
+        // 2) Результаты
         const { data: results } = await db
             .from('race_results')
             .select('race_id, place, total_time, is_dnf, timing_method')
@@ -1545,8 +1806,6 @@ async function loadPlayerProfile(username) {
             .order('place', { ascending: true });
 
         const rows = results || [];
-
-        // 3) Инфо о гонках для этих результатов
         let racesById = {};
         if (rows.length > 0) {
             const { data: races } = await db
@@ -1556,7 +1815,6 @@ async function loadPlayerProfile(username) {
             (races || []).forEach(r => { racesById[r.id] = r; });
         }
 
-        // Статистика
         const finished = rows.filter(r => !r.is_dnf);
         const wins     = finished.filter(r => r.place === 1).length;
         const podiums  = finished.filter(r => r.place <= 3).length;
@@ -1573,11 +1831,51 @@ async function loadPlayerProfile(username) {
                 <div style="font-size:0.75rem;color:var(--text-dim);font-weight:700;margin-top:4px;">${label}</div>
             </div>`;
 
+        // Twitch блок
+        let twitchBlockHtml = '';
+        if (isOwnProfile) {
+            const currentTwitch = escapeHtml(user.twitch_username || '');
+            twitchBlockHtml = `
+                <div style="margin-top:14px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:14px 16px;max-width:520px;">
+                    <label for="profileTwitchInput" style="display:block;font-weight:800;font-size:.85rem;color:var(--text-dim);margin-bottom:6px;">${tr('profile.twitchLabel')}</label>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                        <input class="modal-input" id="profileTwitchInput" value="${currentTwitch}"
+                            placeholder="${tr('profile.twitchPlaceholder')}"
+                            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+                            style="flex:1;min-width:180px;margin:0;padding:10px 12px;"
+                            onkeydown="if(event.key==='Enter'){saveProfileTwitch();}">
+                        <button class="btn btn-primary" onclick="saveProfileTwitch()" style="white-space:nowrap;">${tr('profile.twitchSave')}</button>
+                        <span id="profileTwitchSaveMsg" style="font-size:0.8rem;color:var(--primary);font-weight:700;display:none;"></span>
+                    </div>
+                    <p style="color:var(--text-dim);font-weight:600;font-size:.82rem;margin:8px 0 0;">${tr('profile.twitchHintOwn')}</p>
+                </div>`;
+        } else if (user.twitch_username) {
+            // Показываем "В эфире" если live, иначе просто "Twitch"
+            if (isTwitchLive) {
+                twitchBlockHtml = `
+                <p style="margin-top:10px;">
+                    <a href="https://twitch.tv/${encodeURIComponent(user.twitch_username)}" target="_blank" rel="noopener noreferrer"
+                       class="twitch-live-badge">
+                        🔴 ${tr('twitch.live')}
+                    </a>
+                </p>`;
+            } else {
+                twitchBlockHtml = `
+                <p style="margin-top:10px;">
+                    <a href="https://twitch.tv/${encodeURIComponent(user.twitch_username)}" target="_blank" rel="noopener noreferrer"
+                       style="display:inline-flex;align-items:center;gap:6px;font-weight:800;color:#9146ff;text-decoration:none;background:color-mix(in srgb, #9146ff 14%, transparent);border:1px solid color-mix(in srgb, #9146ff 35%, transparent);padding:6px 14px;border-radius:999px;">
+                        ${tr('twitch.profile')}
+                    </a>
+                </p>`;
+            }
+        }
+
         let html = `
             <div class="race-header" style="margin-bottom:1.5rem;">
-                <div>
+                <div style="flex:1;min-width:260px;">
                     <h1 style="margin:0;">${escapeHtml(user.username)}</h1>
                     <p style="margin:6px 0 0;"><span style="color:${roleColor};font-weight:900;font-size:0.8rem;letter-spacing:.5px;">${roleText}</span></p>
+                    ${twitchBlockHtml}
                 </div>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:2rem;">
@@ -1591,15 +1889,12 @@ async function loadPlayerProfile(username) {
         if (rows.length === 0) {
             html += `<div class="empty-state"><p>${tr('profile.noRaces')}</p></div>`;
         } else {
-            // Сортируем по дате гонки (свежие сверху), максимум 20
             const sorted = [...rows].sort((a, b) => {
                 const da = racesById[a.race_id]?.started_at || '';
                 const db_ = racesById[b.race_id]?.started_at || '';
                 return db_.localeCompare(da);
             }).slice(0, 20);
-
             const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
-
             html += '<div style="display:flex;flex-direction:column;gap:0.5rem;">' + sorted.map(r => {
                 const race = racesById[r.race_id];
                 const medal = r.is_dnf ? 'DNF' : r.place === 1 ? '🥇' : r.place === 2 ? '🥈' : r.place === 3 ? '🥉' : `#${r.place}`;
@@ -1621,14 +1916,15 @@ async function loadPlayerProfile(username) {
                     </div>`;
             }).join('') + '</div>';
         }
-
         container.innerHTML = html;
-
     } catch (err) {
         console.error(err);
         container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
     }
 }
+
+
+
 
 // === ИСТОРИЯ ГОНОК ===
 async function loadRaceHistory() {

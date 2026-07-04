@@ -655,6 +655,27 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
     gap: 10px;
     margin-bottom: .75rem;
 }
+
+.twitch-live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: color-mix(in srgb, #9147ff 20%, transparent);
+    border: 1px solid color-mix(in srgb, #9147ff 55%, transparent);
+    color: #9147ff;
+    font-weight: 800;
+    font-size: 0.78rem;
+    padding: 5px 10px;
+    border-radius: 999px;
+    text-decoration: none;
+    margin-bottom: .6rem;
+    animation: twitchPulse 1.8s ease-in-out infinite;
+}
+.twitch-live-badge:hover { background: color-mix(in srgb, #9147ff 32%, transparent); }
+@keyframes twitchPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.65; }
+}
 .player-name {
     font-weight: 800;
     font-size: 1.1rem;
