@@ -140,11 +140,11 @@ function shadowEmail(username) {
 }
 
 async function loadCurrentProfile() {
-    // Подтянуть username/role/twitch_username из user_profile по auth.uid().
+    // Подтянуть username/role/twitch_username/avatar_url из user_profile по auth.uid().
     if (!currentUser) return;
     const { data, error } = await db
         .from('user_profile')
-        .select('username, role, twitch_username')
+        .select('username, role, twitch_username, avatar_url')
         .eq('id', currentUser.id)
         .maybeSingle();
     if (error) {
@@ -155,6 +155,8 @@ async function loadCurrentProfile() {
         currentUser.username = data.username;
         currentUser.role = data.role || 'player';
         currentUser.twitch_username = data.twitch_username || null;
+        currentUser.avatar_url = data.avatar_url || null;
+        if (data.username) playerAvatarCache[data.username] = data.avatar_url || null;
     }
 }
 
@@ -1767,6 +1769,122 @@ function escapeHtml(s) {
     }[c]));
 }
 
+// ============================================================
+// АВАТАРКИ
+// ============================================================
+// avatar_url хранится в user_profile. Файлы лежат в публичном
+// bucket "avatars" в Supabase Storage: {auth.uid()}/avatar.<ext>.
+// Если аватарки нет — рисуем цветной круг с первой буквой ника.
+
+// Детерминированный цвет из ника (чтобы у каждого игрока был свой)
+function avatarColor(name) {
+    let h = 0;
+    const s = String(name || '?');
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return `hsl(${h % 360}, 45%, 42%)`;
+}
+
+// HTML аватарки: size = 'sm' | 'lg'
+function avatarHtml(username, avatarUrl, size = 'sm') {
+    const cls = `avatar avatar-${size}`;
+    if (avatarUrl) {
+        return `<span class="${cls}"><img src="${escapeHtml(avatarUrl)}" alt="" loading="lazy"
+            onerror="this.parentElement.textContent='${escapeHtml(String(username||'?').charAt(0))}';this.parentElement.style.background='${avatarColor(username)}';"></span>`;
+    }
+    const letter = escapeHtml(String(username || '?').charAt(0));
+    return `<span class="${cls}" style="background:${avatarColor(username)};">${letter}</span>`;
+}
+
+// Кэш ссылок на аватарки по нику (по аналогии с playerTwitchUsernameCache)
+const playerAvatarCache = {}; // username -> avatar_url|null
+
+// Загрузка выбранного файла в Storage + запись ссылки в user_profile
+async function uploadAvatar(file) {
+    if (!currentUser || !currentUser.id) { showToast(tr('avatar.err.noAuth'), 'error'); return; }
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp|gif)$/i.test(file.type)) {
+        showToast(tr('avatar.err.type'), 'error');
+        return;
+    }
+    if (file.size > 2 * 1024 * 1024) { // 2 МБ
+        showToast(tr('avatar.err.size'), 'error');
+        return;
+    }
+    const ext = (file.name.split('.').pop() || 'png').toLowerCase();
+    const path = `${currentUser.id}/avatar.${ext}`;
+    try {
+        const { error: upErr } = await db.storage
+            .from('avatars')
+            .upload(path, file, { upsert: true, cacheControl: '3600', contentType: file.type });
+        if (upErr) throw upErr;
+
+        // Публичная ссылка + cache-buster, иначе браузер покажет старую картинку
+        const { data: pub } = db.storage.from('avatars').getPublicUrl(path);
+        const url = pub.publicUrl + '?t=' + Date.now();
+
+        const { error: dbErr } = await db.from('user_profile')
+            .update({ avatar_url: url })
+            .eq('id', currentUser.id);
+        if (dbErr) throw dbErr;
+
+        currentUser.avatar_url = url;
+        if (currentUser.username) playerAvatarCache[currentUser.username] = url;
+        showToast(tr('avatar.saved'));
+        // Перерисовать открытый профиль, если это наш
+        if (currentProfileUsername && currentUser.username &&
+            currentProfileUsername.toLowerCase() === currentUser.username.toLowerCase()) {
+            loadPlayerProfile(currentProfileUsername);
+        }
+    } catch (err) {
+        console.error('uploadAvatar error:', err);
+        showToast(tr('avatar.err.upload') + (err.message || ''), 'error');
+    }
+}
+
+// Удалить аватарку (вернуться к букве)
+async function removeAvatar() {
+    if (!currentUser || !currentUser.id) return;
+    try {
+        const { error } = await db.from('user_profile')
+            .update({ avatar_url: null })
+            .eq('id', currentUser.id);
+        if (error) throw error;
+        currentUser.avatar_url = null;
+        if (currentUser.username) playerAvatarCache[currentUser.username] = null;
+        showToast(tr('avatar.removed'));
+        if (currentProfileUsername && currentUser.username &&
+            currentProfileUsername.toLowerCase() === currentUser.username.toLowerCase()) {
+            loadPlayerProfile(currentProfileUsername);
+        }
+    } catch (err) {
+        console.error('removeAvatar error:', err);
+        showToast(tr('avatar.err.upload') + (err.message || ''), 'error');
+    }
+}
+
+// Обработчик скрытого <input type="file"> (см. index.html)
+function onAvatarFileChosen(input) {
+    const file = input.files && input.files[0];
+    input.value = ''; // чтобы повторный выбор того же файла тоже сработал
+    if (file) uploadAvatar(file);
+}
+
+// === Шестерёнка настроек профиля (выпадающее меню) ===
+function toggleProfileSettingsMenu(e) {
+    if (e) e.stopPropagation();
+    const menu = document.getElementById('profileSettingsMenu');
+    if (menu) menu.classList.toggle('open');
+}
+function closeProfileSettingsMenu() {
+    const menu = document.getElementById('profileSettingsMenu');
+    if (menu) menu.classList.remove('open');
+}
+// Клик мимо меню — закрыть
+document.addEventListener('click', (e) => {
+    const wrap = document.getElementById('profileSettingsWrap');
+    if (wrap && !wrap.contains(e.target)) closeProfileSettingsMenu();
+});
+
 // Статистика для сортировки/фильтров: количество матчей (race_results) и
 // количество побед (place === 1 и не DNF) для каждого ника.
 // { ник: { races: число, wins: число } }
@@ -1854,6 +1972,7 @@ function renderPlayerCards(users, stats, twitchByName = {}, liveSet = new Set())
     return '<div style="display:flex;flex-direction:column;gap:0.5rem;">' +
         users.map(u => {
             const name = escapeHtml(u.username);
+            const avatar = avatarHtml(u.username, u.avatar_url || playerAvatarCache[u.username] || null, 'sm');
             const roleBadge = u.role === 'master-host' ? ' <span style="font-size:0.65rem;color:#e0503f;font-weight:900;">MASTER</span>'
                 : u.role === 'host' ? ' <span style="font-size:0.65rem;color:#e8a830;font-weight:900;">HOST</span>' : '';
             const s = stats[u.username] || { races: 0, wins: 0 };
@@ -1874,9 +1993,12 @@ function renderPlayerCards(users, stats, twitchByName = {}, liveSet = new Set())
 
             return `
                 <div class="race-card ${isLive ? 'player-live' : ''}" data-player="${name}" onclick="location.hash='#profile/${encodeURIComponent(u.username)}'" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:12px;">
-                    <div style="min-width:0;flex:1;">
-                        <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
-                        ${twitchBadge}
+                    <div style="display:flex;align-items:center;gap:12px;min-width:0;flex:1;">
+                        ${avatar}
+                        <div style="min-width:0;flex:1;">
+                            <h3 style="margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${roleBadge}</h3>
+                            ${twitchBadge}
+                        </div>
                     </div>
                     <div style="display:flex;gap:10px;white-space:nowrap;align-items:center;">
                         <span style="font-family:JetBrains Mono,monospace;font-weight:700;color:#ffd93d;font-size:0.85rem;" title="${tr('players.winsTitle')}">🥇 ${s.wins}</span>
@@ -1956,7 +2078,7 @@ async function loadRandomPlayers() {
     try {
         // Параллельно: список пользователей (с Twitch-ником) + статистика по всем.
         const [usersRes] = await Promise.all([
-            db.from('user_profile').select('username, role, twitch_username').limit(200),
+            db.from('user_profile').select('username, role, twitch_username, avatar_url').limit(200),
             // stats начнёт грузиться только когда узнаем usernames (см. ниже)
         ]);
         const { data: users, error } = usersRes;
@@ -1971,7 +2093,10 @@ async function loadRandomPlayers() {
         const twitchByName = {};
         users.forEach(u => { twitchByName[u.username] = u.twitch_username || null; });
         // Помечаем в глобальный кеш, чтобы не дёргать повторно
-        users.forEach(u => { playerTwitchUsernameCache[u.username] = u.twitch_username || null; });
+        users.forEach(u => {
+            playerTwitchUsernameCache[u.username] = u.twitch_username || null;
+            playerAvatarCache[u.username] = u.avatar_url || null;
+        });
 
         if (playerSortMode) {
             const stats = await fetchPlayerStats(users.map(u => u.username));
@@ -2042,7 +2167,7 @@ async function searchPlayers() {
         // Один запрос вместо двух: users + twitch_username
         const { data: users, error } = await db
             .from('user_profile')
-            .select('username, role, twitch_username')
+            .select('username, role, twitch_username, avatar_url')
             .ilike('username', `%${safe}%`)
             .order('username')
             .limit(20);
@@ -2054,8 +2179,11 @@ async function searchPlayers() {
             return;
         }
 
-        // Помечаем кеш + собираем Twitch-ники сразу из результата запроса.
-        users.forEach(u => { playerTwitchUsernameCache[u.username] = u.twitch_username || null; });
+        // Помечаем кеш + собираем Twitch-ники и аватарки сразу из результата запроса.
+        users.forEach(u => {
+            playerTwitchUsernameCache[u.username] = u.twitch_username || null;
+            playerAvatarCache[u.username] = u.avatar_url || null;
+        });
         const twitchByName = {};
         users.forEach(u => { twitchByName[u.username] = u.twitch_username || null; });
         const twitchUsers = users.map(u => u.twitch_username).filter(Boolean);
@@ -2152,7 +2280,7 @@ async function loadPlayerProfile(username) {
     try {
         const { data: user, error: userErr } = await db
             .from('user_profile')
-            .select('username, role, twitch_username')
+            .select('username, role, twitch_username, avatar_url')
             .ilike('username', username.replace(/[%_\\]/g, '\\$&'))
             .limit(1)
             .maybeSingle();
@@ -2208,14 +2336,12 @@ async function loadPlayerProfile(username) {
 
         let twitchBlockHtml = '';
         if (isOwnProfile) {
-            const twitchBtnLabel = user.twitch_username ? tr('profile.twitchEdit') : tr('profile.twitchLink');
             const twitchStatus = user.twitch_username
                 ? `<a href="https://twitch.tv/${encodeURIComponent(user.twitch_username)}" target="_blank" rel="noopener noreferrer" style="font-weight:800;color:#9146ff;text-decoration:none;">${isTwitchLive ? '🔴 ' + tr('twitch.live') + ' · ' : ''}twitch.tv/${escapeHtml(user.twitch_username)}</a>`
                 : `<span style="color:var(--text-dim);font-weight:600;">${tr('profile.twitchUnlinked')}</span>`;
             twitchBlockHtml = `
                 <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
                     ${twitchStatus}
-                    <button class="btn btn-ghost" style="padding:6px 12px;font-size:0.85rem;" onclick="showTwitchSettingsModal()">${twitchBtnLabel}</button>
                 </div>`;
         } else if (user.twitch_username) {
             if (isTwitchLive) {
@@ -2237,12 +2363,36 @@ async function loadPlayerProfile(username) {
             }
         }
 
+        playerAvatarCache[user.username] = user.avatar_url || null;
+
+        // Свой профиль: шестерёнка справа с выпадающим меню настроек
+        // (аватар + Twitch), чтобы кнопки не занимали основное пространство.
+        let settingsGearHtml = '';
+        if (isOwnProfile) {
+            const twitchBtnLabel = user.twitch_username ? tr('profile.twitchEdit') + ' Twitch' : tr('profile.twitchLink');
+            settingsGearHtml = `
+                <div class="profile-settings" id="profileSettingsWrap">
+                    <button class="profile-gear-btn" onclick="toggleProfileSettingsMenu(event)" title="${tr('profile.settingsTitle')}" aria-label="${tr('profile.settingsTitle')}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </button>
+                    <div class="profile-settings-menu" id="profileSettingsMenu">
+                        <button onclick="closeProfileSettingsMenu();document.getElementById('avatarFileInput').click()">${user.avatar_url ? tr('avatar.change') : tr('avatar.upload')}</button>
+                        ${user.avatar_url ? `<button onclick="closeProfileSettingsMenu();removeAvatar()">${tr('avatar.remove')}</button>` : ''}
+                        <button onclick="closeProfileSettingsMenu();showTwitchSettingsModal()">${twitchBtnLabel}</button>
+                    </div>
+                </div>`;
+        }
+
         let html = `
             <div class="race-header" style="margin-bottom:1.5rem;">
-                <div style="flex:1;min-width:260px;">
-                    <h1 style="margin:0;">${escapeHtml(user.username)}</h1>
-                    <p style="margin:6px 0 0;"><span style="color:${roleColor};font-weight:900;font-size:0.8rem;letter-spacing:.5px;">${roleText}</span></p>
-                    ${twitchBlockHtml}
+                <div style="flex:1;min-width:260px;display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+                    ${avatarHtml(user.username, user.avatar_url, 'lg')}
+                    <div style="min-width:200px;flex:1;">
+                        <h1 style="margin:0;">${escapeHtml(user.username)}</h1>
+                        <p style="margin:6px 0 0;"><span style="color:${roleColor};font-weight:900;font-size:0.8rem;letter-spacing:.5px;">${roleText}</span></p>
+                        ${twitchBlockHtml}
+                    </div>
+                    ${settingsGearHtml}
                 </div>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:0.75rem;margin-bottom:2rem;">

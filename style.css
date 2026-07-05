@@ -1148,6 +1148,91 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
 .modal-actions .btn { flex: 1; }
 
 .modal-hint { color: var(--text-dim); font-weight: 600; font-size: .9rem; margin-bottom: 1rem; }
+
+/* ===================== АВАТАРКИ ===================== */
+.avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: var(--surface-2);
+    border: 2px solid rgba(255,255,255,0.10);
+    color: #fff;
+    font-weight: 900;
+    user-select: none;
+    text-transform: uppercase;
+}
+.avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.avatar-sm { width: 40px;  height: 40px;  font-size: 1rem; }
+.avatar-lg { width: 96px;  height: 96px;  font-size: 2.4rem; border-width: 3px; }
+.avatar-preview { width: 120px; height: 120px; font-size: 3rem; margin: 0 auto 1rem; display: flex; }
+
+/* ===================== ШЕСТЕРЁНКА НАСТРОЕК ПРОФИЛЯ ===================== */
+.profile-settings {
+    position: relative;
+    margin-left: auto;   /* прижимаем к правому краю race-header */
+    flex-shrink: 0;
+}
+.profile-gear-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: color .2s, border-color .2s, transform .3s;
+}
+.profile-gear-btn svg { width: 21px; height: 21px; }
+.profile-gear-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    transform: rotate(45deg);
+}
+.profile-settings-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 210px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 6px;
+    box-shadow: var(--shadow);
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 50;
+}
+.profile-settings-menu.open { display: flex; }
+.profile-settings-menu button {
+    all: unset;
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+}
+.profile-settings-menu button:hover {
+    background: var(--surface-3);
+    color: var(--primary);
+}
+
 .modal-hint strong { color: var(--primary); }
 
 .modal-warning {
