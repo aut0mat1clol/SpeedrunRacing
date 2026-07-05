@@ -679,7 +679,94 @@ a { color: inherit; }
 .howto-item strong { font-weight: 800; font-size: 1.05rem; }
 .howto-item span { color: var(--text-dim); font-weight: 600; }
 
-/* Кликабельный пункт-загрузка */
+/* Кликабельный пункт-загрузка (основной CTA-блок) */
+.howto-download-cta {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+    background: var(--surface);
+    border: 2px solid var(--primary);
+    border-radius: var(--radius);
+    text-decoration: none;
+    color: inherit;
+    transition: transform .18s, box-shadow .18s, border-color .18s;
+    box-shadow: var(--shadow-sm);
+}
+.howto-download-cta:hover {
+    transform: translateY(-3px);
+    border-color: var(--primary-dark);
+    box-shadow: var(--glow);
+}
+
+.howto-download-cta .cta-icon {
+    flex-shrink: 0;
+    width: 64px;
+    height: 64px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background .18s;
+}
+.howto-download-cta .cta-icon svg {
+    width: 32px;
+    height: 32px;
+}
+.howto-download-cta:hover .cta-icon {
+    background: var(--primary);
+    color: #08110a;
+}
+
+.howto-download-cta .cta-text {
+    flex: 1;
+    text-align: left;
+}
+.howto-download-cta .cta-text h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.2rem;
+    font-weight: 800;
+}
+.howto-download-cta .cta-text p {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.95rem;
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.howto-download-cta .cta-filename {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--primary);
+    font-weight: 700;
+}
+
+.howto-download-cta .cta-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-left: 1.5rem;
+    border-left: 1px solid var(--border);
+    min-width: 80px;
+    text-align: center;
+}
+.howto-download-cta .cta-meta span {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    font-weight: 700;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+}
+.howto-download-cta .cta-meta strong {
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: var(--text);
+}
+
+/* Кликабельный пункт-загрузка (старый класс для совместимости) */
 a.howto-download {
     text-decoration: none;
     color: inherit;
@@ -687,6 +774,7 @@ a.howto-download {
 }
 a.howto-download:hover { border-color: var(--primary); box-shadow: var(--glow); }
 a.howto-download:hover .download-badge { background: var(--primary); color: #08110a; }
+
 
 .download-badge {
     display: inline-flex !important;

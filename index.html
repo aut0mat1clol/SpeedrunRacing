@@ -12,7 +12,7 @@
       агрессивный кеш GitHub Pages и браузера при деплое. Меняй V= при
       каждом изменении этих файлов (или используй git commit hash).
     -->
-    <link rel="stylesheet" href="style.css?v=20260704-3">
+    <link rel="stylesheet" href="style.css?v=20260705-2">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%23131a10' width='100' height='100' rx='22'/><path d='M22 72 L50 26 L78 72' stroke='%236aad38' stroke-width='10' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
     <script>(function(){var t=localStorage.getItem('srt-theme')||'dark';document.documentElement.setAttribute('data-theme',t);var l=localStorage.getItem('srt-lang')||'ru';document.documentElement.setAttribute('lang',l);})();</script>
     <!-- supabase-js — грузим с defer, чтобы не блокировать FCP; createClient подождёт DOMContentLoaded -->
@@ -198,19 +198,31 @@
     <section class="page" id="page-howto" hidden>
         <div class="container">
             <h1 data-i18n="howto.title">Как подключиться к гонке</h1>
-            <div class="howto-list">
-                <a class="howto-item howto-download" href="Component/SpeedrunRaceComponent.dll" download="SpeedrunRaceComponent.dll">
-                    <div class="howto-number">01</div>
-                    <div>
-                        <strong data-i18n="howto.install.title">Установи компонент</strong><br>
-                        <span data-i18n="howto.install.text">Добавь SpeedRun Race Tracker в LiveSplit</span>
-                        <br>
-                        <span class="download-badge">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>
-                            <span data-i18n="howto.download">Скачать .dll</span>
-                        </span>
-                    </div>
-                </a>
+            <p style="color:var(--text-dim);font-weight:600;margin-bottom:1.75rem;max-width:680px;" data-i18n="howto.intro">
+                Скачай компонент для LiveSplit, добавь его в layouts, зарегистрируйся на сайте и подключись к гонке.
+            </p>
+
+            <!-- Большой CTA-блок: ZIP-архив (рекомендуется) -->
+            <a class="howto-download-cta" href="Component/SpeedrunRaceComponent.zip" download="SpeedrunRaceComponent.zip">
+                <div class="cta-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </div>
+                <div class="cta-text">
+                    <h3 data-i18n="howto.recommended">Рекомендуем: ZIP-архив</h3>
+                    <p data-i18n="howto.recommendedText">Содержит DLL + README. Скачайте, распакуйте, следуйте инструкции. Меньше ложных срабатываний антивируса.</p>
+                    <span class="cta-filename">SpeedrunRaceComponent.zip</span>
+                </div>
+                <div class="cta-meta">
+                    <span data-i18n="howto.downloadLabel">Скачать</span>
+                    <strong>ZIP</strong>
+                </div>
+            </a>
+
+            <!-- Второй CTA: только DLL (для тех, кто знает что делает) -->
+            
+
+            <div class="howto-list" style="margin-top:1.5rem;">
+                <div class="howto-item"><div class="howto-number">01</div><div><strong data-i18n="howto.install.title">Установи компонент</strong><br><span data-i18n="howto.install.text">Добавь SpeedRun Race Tracker в LiveSplit</span></div></div>
                 <div class="howto-item"><div class="howto-number">02</div><div><strong data-i18n="howto.register.title">Зарегистрируйся</strong><br><span data-i18n="howto.register.text">Создай аккаунт на этом сайте</span></div></div>
                 <div class="howto-item"><div class="howto-number">03</div><div><strong data-i18n="howto.auth.title">Авторизуйся в LiveSplit</strong><br><span data-i18n="howto.auth.text">Введи логин и пароль в настройках компонента</span></div></div>
                 <div class="howto-item"><div class="howto-number">04</div><div><strong data-i18n="howto.join.title">Подключись к гонке</strong><br><span data-i18n="howto.join.text">Введи ID гонки и нажми «Подключиться»</span></div></div>
@@ -300,10 +312,10 @@
       в порядке объявления. Это даёт намного более быстрый FCP/LCP.
       config.js (если есть) должен идти до app.js — он у тебя и так раньше.
     -->
-    <script defer src="theme.js"></script>
-    <script defer src="i18n.js"></script>
-    <script defer src="config.js"></script>
-    <script defer src="app.js"></script>
-    <script defer src="router.js"></script>
+    <script defer src="theme.js?v=20260705-1"></script>
+    <script defer src="i18n.js?v=20260705-1"></script>
+    <script defer src="config.js?v=20260705-1"></script>
+    <script defer src="app.js?v=20260705-1"></script>
+    <script defer src="router.js?v=20260705-1"></script>
 </body>
 </html>

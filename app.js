@@ -121,37 +121,75 @@ function updateAuthUI() {
     }
 }
 
-function saveUserToStorage(user) {
-    localStorage.setItem('speedrun_user', JSON.stringify(user));
+// ============================================================
+// АВТОРИЗАЦИЯ (Supabase Auth)
+// ============================================================
+// Email — теневой, юзер его не видит: username@users.speedrun.local
+// Пароль НИКОГДА не попадает в наш код и в public.users. Он
+// хешируется в auth.users (bcrypt) и проверяется через
+// signInWithPassword. Анонимный SELECT из public.users с паролем
+// полностью убран — фронт больше не может прочитать чужие креды.
+//
+// Доп. RPC register_user() нужен, потому что signUp() создаёт
+// auth.users, но не нашу public.user_profile — а фронт ждёт
+// username/role/twitch_username. Также username нельзя хранить
+// в email (там email), поэтому достаём из user_metadata.
+
+function shadowEmail(username) {
+    return username.toLowerCase().trim() + '@users.speedrun.local';
 }
 
-function loadUserFromStorage() {
-    const saved = localStorage.getItem('speedrun_user');
-    if (saved) {
-        try {
-            currentUser = JSON.parse(saved);
+async function loadCurrentProfile() {
+    // Подтянуть username/role/twitch_username из user_profile по auth.uid().
+    if (!currentUser) return;
+    const { data, error } = await db
+        .from('user_profile')
+        .select('username, role, twitch_username')
+        .eq('id', currentUser.id)
+        .maybeSingle();
+    if (error) {
+        console.warn('loadCurrentProfile error:', error);
+        return;
+    }
+    if (data) {
+        currentUser.username = data.username;
+        currentUser.role = data.role || 'player';
+        currentUser.twitch_username = data.twitch_username || null;
+    }
+}
+
+async function loadUserFromStorage() {
+    // Восстанавливаем сессию из Supabase Auth (JWT в localStorage
+    // supabase сам управляет — мы просто проверяем, что она валидна).
+    try {
+        const { data, error } = await db.auth.getSession();
+        if (error) throw error;
+        if (data?.session?.user) {
+            currentUser = { id: data.session.user.id };
+            await loadCurrentProfile();
             updateAuthUI();
             return true;
-        } catch(e) {}
+        }
+    } catch (e) {
+        console.warn('loadUserFromStorage:', e);
     }
     return false;
 }
 
-function logoutUser() {
+async function logoutUser() {
+    try {
+        await db.auth.signOut();
+    } catch (e) {
+        console.warn('signOut error:', e);
+    }
     currentUser = null;
-    localStorage.removeItem('speedrun_user');
     isHost = false;
     updateAuthUI();
-    
-    // Сбрасываем текущую сессию
     currentPlayerId = null;
     currentPlayerName = null;
-    
-    // Возвращаемся на список гонок
     if (currentRaceId) {
         showRaceList();
     }
-    
     showToast(tr('toast.loggedOut'));
 }
 
@@ -167,39 +205,27 @@ async function loginUser() {
     }
 
     try {
-        const { data, error } = await db
-            .from('users')
-            .select('*')
-            .eq('username', username)
-            .eq('password', password)
-            .single();
-
-        if (error || !data) {
+        const { data, error } = await db.auth.signInWithPassword({
+            email: shadowEmail(username),
+            password
+        });
+        if (error || !data?.user) {
             errorEl.textContent = tr('auth.err.invalid');
             errorEl.style.display = 'block';
             return;
         }
-
-        currentUser = {
-            id: data.id,
-            username: data.username,
-            role: data.role || 'player'
-        };
-
-        saveUserToStorage(currentUser);
+        currentUser = { id: data.user.id };
+        await loadCurrentProfile();
         updateAuthUI();
         closeAuthModal();
-        
         showToast(tr('toast.welcome', { name: currentUser.username }));
 
-        // Обновляем список гонок / текущий экран
         if (currentRaceId) {
             document.getElementById('hostPanel').style.display = isHost ? '' : 'none';
             loadRaceData();
         } else {
             loadRaceList();
         }
-
     } catch (err) {
         errorEl.textContent = tr('auth.err.login');
         errorEl.style.display = 'block';
@@ -217,7 +243,6 @@ async function registerUser() {
         errorEl.style.display = 'block';
         return;
     }
-
     if (username.length < 3) {
         errorEl.textContent = tr('auth.err.usernameShort');
         errorEl.style.display = 'block';
@@ -225,43 +250,56 @@ async function registerUser() {
     }
 
     try {
-        const userId = username.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
-
-        // Всегда регистрируем как player
-        const { error } = await db.from('users').insert({
-            id: userId,
-            username,
-            password,
-            role: 'player'
+        // Сначала проверим, что username свободен (через RPC, чтобы
+        // не зависеть от RLS на user_profile).
+        const { data: existsData } = await db.rpc('username_exists', {
+            check_username: username
         });
-
-        if (error) {
-            if (error.code === '23505') { // unique constraint
-                errorEl.textContent = tr('auth.err.userExists');
-            } else {
-                errorEl.textContent = tr('auth.err.registerPrefix') + error.message;
-            }
+        if (existsData === true) {
+            errorEl.textContent = tr('auth.err.userExists');
             errorEl.style.display = 'block';
             return;
         }
 
-        // Автоматический вход после регистрации
-        currentUser = { id: userId, username, role: 'player' };
-        saveUserToStorage(currentUser);
+        // Создаём пользователя через RPC (атомарно: auth.users + identity
+        // + user_profile). RPC работает от лица service role, поэтому
+        // может писать в auth.users.
+        const { data: rpcRes, error: rpcErr } = await db.rpc('register_user', {
+            new_username: username,
+            new_password: password
+        });
+        if (rpcErr) throw rpcErr;
+        if (!rpcRes || !rpcRes.success) {
+            const errKey = rpcRes?.error || 'register_failed';
+            const msg = ({
+                username_too_short: tr('auth.err.usernameShort'),
+                password_too_short: tr('auth.err.passwordShort') || 'Пароль слишком короткий (мин. 6 символов)',
+                user_exists: tr('auth.err.userExists')
+            })[errKey] || (tr('auth.err.registerPrefix') + (rpcRes?.error || ''));
+            errorEl.textContent = msg;
+            errorEl.style.display = 'block';
+            return;
+        }
+
+        // Теперь логинимся через Supabase Auth — RPC создал запись,
+        // но сессии у нас ещё нет.
+        const { data: signIn, error: signInErr } = await db.auth.signInWithPassword({
+            email: shadowEmail(username),
+            password
+        });
+        if (signInErr || !signIn?.user) throw signInErr || new Error('signIn failed');
+
+        currentUser = { id: signIn.user.id };
+        await loadCurrentProfile();
         updateAuthUI();
         closeAuthModal();
-
         showToast(tr('toast.registerSuccess'));
-
-        // Обновляем счётчик зарегистрированных пользователей на главной.
         loadUserCount();
-
         if (currentRaceId) {
             document.getElementById('hostPanel').style.display = 'none';
         } else {
             loadRaceList();
         }
-
     } catch (err) {
         errorEl.textContent = tr('auth.err.register');
         errorEl.style.display = 'block';
@@ -328,7 +366,7 @@ async function showTwitchSettingsModal() {
     document.getElementById('twitchSettingsModal').classList.add('active');
     // подтянуть текущее значение
     try {
-        const { data } = await db.from('users').select('twitch_username').eq('id', currentUser.id).maybeSingle();
+        const { data } = await db.from('user_profile').select('twitch_username').eq('id', currentUser.id).maybeSingle();
         if (input && data && data.twitch_username) input.value = data.twitch_username;
         if (input) input.focus();
     } catch(e) {}
@@ -351,7 +389,7 @@ async function saveTwitchSettings() {
         return;
     }
     try {
-        const { error } = await db.from('users').update({ twitch_username: twitch || null }).eq('id', currentUser.id);
+        const { error } = await db.from('user_profile').update({ twitch_username: twitch || null }).eq('id', currentUser.id);
         if (error) throw error;
         if (currentUser.username) playerTwitchUsernameCache[currentUser.username] = twitch || null;
         closeTwitchSettingsModal();
@@ -642,7 +680,7 @@ async function fetchPlayersTwitchUsernames(playerNames) {
         try {
             // Запрос: сразу с twitch_username, чтобы не делать второй round-trip
             const { data } = await db
-                .from('users')
+                .from('user_profile')
                 .select('username, twitch_username')
                 .in('username', unknown);
             unknown.forEach(n => { playerTwitchUsernameCache[n] = null; }); // отметим как проверенные
@@ -1548,7 +1586,7 @@ async function loadUserCount() {
     if (!el) return;
     try {
         const { count, error } = await db
-            .from('users')
+            .from('user_profile')
             .select('*', { count: 'exact', head: true });
         if (error) throw error;
         if (typeof count === 'number') {
@@ -1850,7 +1888,7 @@ async function loadRandomPlayers() {
     try {
         // Параллельно: список пользователей (с Twitch-ником) + статистика по всем.
         const [usersRes] = await Promise.all([
-            db.from('users').select('username, role, twitch_username').limit(200),
+            db.from('user_profile').select('username, role, twitch_username').limit(200),
             // stats начнёт грузиться только когда узнаем usernames (см. ниже)
         ]);
         const { data: users, error } = usersRes;
@@ -1935,7 +1973,7 @@ async function searchPlayers() {
         const safe = query.replace(/[%_\\]/g, '\\$&');
         // Один запрос вместо двух: users + twitch_username
         const { data: users, error } = await db
-            .from('users')
+            .from('user_profile')
             .select('username, role, twitch_username')
             .ilike('username', `%${safe}%`)
             .order('username')
@@ -2045,7 +2083,7 @@ async function loadPlayerProfile(username) {
 
     try {
         const { data: user, error: userErr } = await db
-            .from('users')
+            .from('user_profile')
             .select('username, role, twitch_username')
             .ilike('username', username.replace(/[%_\\]/g, '\\$&'))
             .limit(1)
