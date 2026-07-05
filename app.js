@@ -694,13 +694,16 @@ async function fetchPlayersTwitchUsernames(playerNames) {
     return result;
 }
 
+let loadPlayersReqId = 0;
 async function loadPlayers() {
     if (!currentRaceId) return;
+    const reqId = ++loadPlayersReqId;
     try {
         const [playersRes, readyRes] = await Promise.all([
             db.from('players').select('*').eq('race_id', currentRaceId),
             db.from('ready').select('*').eq('race_id', currentRaceId)
         ]);
+        if (reqId !== loadPlayersReqId) return;
         const players  = playersRes.data || [];
         const readyMap = {};
         (readyRes.data || []).forEach(r => { readyMap[r.player_id] = r.ready; });
@@ -836,18 +839,15 @@ let liveTimerInterval = null;
 // с `lastSeenAt` прошло больше порога (апдейтов не было — таймер стоит).
 // Для Game Time линейная дорисовка ВООБЩЕ отключена (Game Time идёт
 // только по игровому таймеру, в LiveSplit он не «тикает» каждую мс).
-const liveTimeAnchors = {}; // playerId -> { time, at, lastSeenAt, timingMethod }
+const liveTimeAnchors = {}; // playerId -> { time, at, lastSeenAt, lastReported, timingMethod, isPaused }
 
 const LIVE_FREEZE_AFTER = {
-    // Если от компонента не было обновлений больше этого — замораживаем
-    // отображение на последнем известном значении.
-    realTime: 350,   // компонент шлёт ~10 раз/с
-    gameTime: 700    // Game Time апдейтится реже, особенно при загрузках
+    realTime: 650,   // Единый порог заморозки при отсутствии пакетов
+    gameTime: 650
 };
 
 function syncPlayerAnchor(p) {
     const id = p.id;
-    // Привязываемся только пока игрок бежит.
     if (p.status !== 'racing') {
         delete liveTimeAnchors[id];
         return;
@@ -859,50 +859,72 @@ function syncPlayerAnchor(p) {
     const prev = liveTimeAnchors[id];
 
     if (!prev) {
-        liveTimeAnchors[id] = { time: reported, at: now, lastSeenAt: now, timingMethod };
+        liveTimeAnchors[id] = {
+            time: reported,
+            at: now,
+            lastSeenAt: now,
+            lastReported: reported,
+            timingMethod,
+            isPaused: false
+        };
         return;
     }
 
-    // Обновление пришло — фиксируем «живой» момент. Это сигнал компонента
-    // «таймер всё ещё мой, просто пауза или загрузка».
-    prev.lastSeenAt = now;
+    // Если игрок переключил метод таймера (RealTime <-> GameTime) в LiveSplit
+    if (timingMethod !== prev.timingMethod) {
+        const freezeAfter = LIVE_FREEZE_AFTER[prev.timingMethod] || 650;
+        const wasFrozen = (now - prev.lastSeenAt) > freezeAfter || prev.isPaused;
+
+        prev.timingMethod = timingMethod;
+        prev.time = reported;
+        prev.lastReported = reported;
+
+        if (wasFrozen) {
+            // Если таймер стоял на паузе или был остановлен, при смене режима он гарантированно остаётся стоять!
+            prev.isPaused = true;
+            prev.lastSeenAt = 0;
+        } else {
+            prev.at = now;
+            prev.lastSeenAt = now;
+        }
+        return;
+    }
+
     prev.timingMethod = timingMethod;
 
-    // Меняется ли total_time между апдейтами?
-    if (reported !== prev.time) {
-        // Да — пересинхронизируем якорь, но плавно: якорь ставим на
-        // последнее известное значение, и пусть getLivePlayerTime()
-        // дорисует дельту. Это даёт плавный «бегущий» таймер.
-        prev.time = reported;
-        prev.at = now;
+    if (reported !== prev.lastReported) {
+        const freezeAfter = LIVE_FREEZE_AFTER[timingMethod] || 650;
+        const wasFrozen = (now - prev.lastSeenAt) > freezeAfter || prev.isPaused;
+
+        prev.lastSeenAt = now;
+        prev.lastReported = reported;
+        prev.isPaused = false;
+
+        const currentDisplay = prev.time + (now - prev.at);
+        const drift = Math.abs(currentDisplay - reported);
+
+        if (wasFrozen || drift > 350) {
+            prev.time = reported;
+            prev.at = now;
+        } else {
+            prev.time = currentDisplay + (reported - currentDisplay) * 0.15;
+            prev.at = now;
+        }
+    } else {
+        // Одинаковое значение при повторном опросе
     }
-    // Если reported === prev.time — оставляем at как был, чтобы
-    // линейная дорисовка не «обгоняла» компонент.
 }
 
-// Текущее отображаемое время игрока, синхронизированное с LiveSplit.
-// Возвращает null, если таймер «заморожен» (не идёт).
 function getLivePlayerTime(playerId, raceStartFallback) {
     const a = liveTimeAnchors[playerId];
     if (a) {
         const freezeAfter = LIVE_FREEZE_AFTER[a.timingMethod] || LIVE_FREEZE_AFTER.realTime;
         const sinceUpdate = Date.now() - a.lastSeenAt;
-        if (sinceUpdate > freezeAfter) {
-            // Апдейтов давно не было → таймер стоит. Возвращаем последнее
-            // зафиксированное значение, и НЕ прибавляем дельту.
-            return a.time;
+        if (a.isPaused || sinceUpdate > freezeAfter) {
+            return a.lastReported;
         }
-        if (a.timingMethod === 'gameTime') {
-            // Game Time: между апдейтами НЕ дорисовываем, компонент шлёт
-            // реальное значение total_time из LiveSplit каждую секунду.
-            // Пока апдейт «свежий» — показываем текущее значение якоря.
-            return a.time;
-        }
-        // Real Time: апдейты частые, дорисовываем дельту между ними.
         return a.time + (Date.now() - a.at);
     }
-    // Запасной вариант: пока компонент не прислал total_time — считаем от
-    // старта гонки (как раньше), чтобы карточка не висела пустой.
     if (raceStartFallback) return Date.now() - raceStartFallback;
     return 0;
 }
@@ -997,6 +1019,23 @@ function updatePlayersGrid(players, readyMap) {
 
     // Обновляем/чистим якоря синхронизации с LiveSplit для всех игроков.
     sorted.forEach(syncPlayerAnchor);
+
+    // Вычисляем структурный хеш сетки.
+    // Если структура не изменилась (игрок просто бежит по уровню), мы НЕ пересоздаем DOM grid.innerHTML!
+    // Это предотвращает разрушение DOM-элементов и полностью убирает мерцание/разрывы таймера.
+    const gridHash = sorted.map(p => {
+        const isLd = p.total_time === leaderTime && leaderTime !== Infinity;
+        const tw = livePlayerTwitch[p.id] || null;
+        return `${p.id}|${p.status}|${p.timing_method}|${p.current_split}|${JSON.stringify(p.splits)}|${isLd}|${tw}|${canManageCurrentRace}`;
+    }).join('||');
+
+    if (grid.getAttribute('data-grid-hash') === gridHash) {
+        // DOM уже актуален, якоря обновлены в памяти. Живой таймер startLiveTimer продолжит счёт.
+        const hasR = sorted.some(p => p.status === 'racing' && (liveTimeAnchors[p.id] || raceStart));
+        if (hasR) startLiveTimer(raceStart); else stopLiveTimer();
+        return;
+    }
+    grid.setAttribute('data-grid-hash', gridHash);
 
     grid.innerHTML = sorted.map(p => {
         const isMe     = p.id === currentPlayerId;
@@ -1142,7 +1181,7 @@ function startLiveTimer(raceStartFallback) {
             const elapsed = getLivePlayerTime(playerId, raceStartFallback);
             timeSpan.textContent = formatTime(elapsed);
         });
-    }, 80); // обновляем ~12 раз в секунду
+    }, 33); // обновляем ~30 раз в секунду для плавного отображения сотых
 }
 
 function stopLiveTimer() {
@@ -1160,29 +1199,45 @@ function updateReadyCount(total, ready) {
 }
 
 function formatTime(ms) {
-    if (!ms) return '00:00.00';
+    if (!ms || ms <= 0) return '00:00.00';
     const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     const centiseconds = Math.floor((ms % 1000) / 10);
-    return `${minutes.toString().padStart(2,'0')}:${seconds.toString().padStart(2,'0')}.${centiseconds.toString().padStart(2,'0')}`;
+    const secStr = seconds.toString().padStart(2, '0');
+    const csStr = centiseconds.toString().padStart(2, '0');
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secStr}.${csStr}`;
+    }
+    return `${minutes.toString().padStart(2, '0')}:${secStr}.${csStr}`;
 }
 
 function formatDelta(ms) {
-    if (!ms) return '';
+    if (!ms || ms <= 0) return '';
     const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
     const centiseconds = Math.floor((ms % 1000) / 10);
-    return `${minutes}:${seconds.toString().padStart(2,'0')}.${centiseconds.toString().padStart(2,'0')}`;
+    const secStr = seconds.toString().padStart(2, '0');
+    const csStr = centiseconds.toString().padStart(2, '0');
+    if (hours > 0) {
+        return `${hours}:${minutes.toString().padStart(2, '0')}:${secStr}.${csStr}`;
+    }
+    return `${minutes}:${secStr}.${csStr}`;
 }
 
 // ============================================================
 // REALTIME
 // ============================================================
 
+let fallbackPollInterval = null;
+
 function setupRealtimeListeners() {
     if (realtimeChannel) db.removeChannel(realtimeChannel);
+    if (fallbackPollInterval) { clearInterval(fallbackPollInterval); fallbackPollInterval = null; }
+
     realtimeChannel = db
         .channel('race-' + currentRaceId)
         .on('postgres_changes',
@@ -1197,7 +1252,20 @@ function setupRealtimeListeners() {
         .on('postgres_changes',
             { event: '*', schema: 'public', table: 'race_results', filter: 'race_id=eq.' + currentRaceId },
             () => showRaceResults())
-        .subscribe();
+        .subscribe((status) => {
+            console.log('[Realtime] Subscription status:', status);
+            if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                setTimeout(() => {
+                    if (currentRaceId) setupRealtimeListeners();
+                }, 2000);
+            }
+        });
+
+    fallbackPollInterval = setInterval(() => {
+        if (currentRaceId && document.hidden === false) {
+            loadPlayers();
+        }
+    }, 3000);
 }
 
 // ============================================================
