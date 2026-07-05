@@ -1675,6 +1675,10 @@ async function loadUserCount() {
     }
 }
 
+// «Отпечаток» live-набора игроков на странице «Игроки» (для live-poll ниже).
+// null = базовая точка ещё не снята (после ручного ререндера снимается заново).
+let lastPlayersLiveKey = null;
+
 document.addEventListener('DOMContentLoaded', () => {
     loadUserFromStorage();
     updateAuthUI(); // гарантированно скрыть/показать кнопки в зависимости от входа
@@ -1690,39 +1694,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Раздел «Игроки» — тоже (см. refreshPlayersPage).
     updatePlayerSortUI();
 
-    // Автообновление
+    // Автообновление (как раньше — каждые 15с, включая страницу игроков).
+    // Но список игроков обновляется «тихо»: данные перезапрашиваются,
+    // а DOM перерисовывается ТОЛЬКО если у кого-то изменился live-статус
+    // (появился/пропал стрим). Иначе визуально ничего не дёргается.
     setInterval(() => {
         if (!currentRaceId) {
             loadRaceList();
-            // Историю и игроков обновляем только если соответствующая вкладка
-            // сейчас активна — иначе это впустую.
             if (!document.getElementById('page-history')?.hidden) loadRaceHistory();
-            if (!document.getElementById('page-players')?.hidden) refreshPlayersPage();
+            if (!document.getElementById('page-players')?.hidden) refreshPlayersPage(true); // silent
             if (onHome) loadUserCount();
         }
     }, 15000);
-
-    // Лёгкий live-poll: только проверка Twitch-статуса уже отрисованных
-    // карточек, без полной перерисовки списка. Раз в 45с — ловим моменты,
-    // когда кто-то пошёл/вышел из эфира, пока пользователь сидит на странице.
-    setInterval(() => {
-        if (currentRaceId) return;
-        if (document.getElementById('page-players')?.hidden) return;
-        const cards = document.querySelectorAll('#playerSearchResults .race-card[data-player]');
-        if (cards.length === 0) return;
-        const twitches = new Set();
-        cards.forEach(card => {
-            const badge = card.querySelector('.player-live-badge');
-            if (badge && badge.href) {
-                const m = badge.href.match(/twitch\.tv\/([^/?#]+)/i);
-                if (m) twitches.add(decodeURIComponent(m[1]));
-            }
-        });
-        if (twitches.size === 0) return;
-        const container = document.getElementById('playerSearchResults');
-        const playerUsernames = Array.from(cards).map(c => c.getAttribute('data-player'));
-        enrichPlayersWithTwitchLive(Array.from(twitches), container, playerUsernames);
-    }, 45000);
 });
 
 // Закрытие модалок по клику вне
@@ -2073,6 +2056,7 @@ async function loadRandomPlayers() {
     const container = document.getElementById('playerSearchResults');
     if (!container) return;
 
+    lastPlayersLiveKey = null; // список меняется — live-poll снимет новую базовую точку
     container.innerHTML = `<p class="loading-text">⏳ ${tr('players.searching')}</p>`;
 
     try {
@@ -2111,6 +2095,9 @@ async function loadRandomPlayers() {
             container.innerHTML =
                 `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${label}</p>` +
                 renderPlayerCards(ordered, stats, twitchByName, liveSet);
+            // Базовая точка для «тихого» автообновления — по ВСЕМ юзерам
+            // (silent-проверка сравнивает именно с полным набором).
+            lastPlayersLiveKey = playersLiveKey(Object.values(twitchByName).filter(Boolean), liveSet);
             return;
         }
 
@@ -2124,19 +2111,23 @@ async function loadRandomPlayers() {
 
         const pickedTwitch = {};
         picked.forEach(u => { pickedTwitch[u.username] = twitchByName[u.username] || null; });
-        const pickedTwitchUsernames = picked.map(u => pickedTwitch[u.username]).filter(Boolean);
 
-        // Параллельно: stats + проверка live на Twitch. Карточки рисуем один раз
+        // Параллельно: stats + проверка live на Twitch. Live проверяем по ВСЕМ
+        // юзерам (не только показанным 10) — этот же набор служит базовой
+        // точкой для «тихого» автообновления. Карточки рисуем один раз
         // уже с бейджами, без отдельного фонового прохода.
         const [stats, liveSet] = await Promise.all([
             fetchPlayerStats(picked.map(u => u.username)),
-            fetchLiveTwitchUsernames(pickedTwitchUsernames)
+            fetchLiveTwitchUsernames(Object.values(twitchByName).filter(Boolean))
         ]);
         const ordered = sortLiveFirst(picked, pickedTwitch, liveSet);
 
         container.innerHTML =
             `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${tr('players.random')}</p>` +
             renderPlayerCards(ordered, stats, pickedTwitch, liveSet);
+        // Базовая точка для «тихого» автообновления — по ВСЕМ юзерам,
+        // а не только по показанным 10 (silent-проверка смотрит на всех).
+        lastPlayersLiveKey = playersLiveKey(Object.values(twitchByName).filter(Boolean), liveSet);
 
     } catch (err) {
         console.error(err);
@@ -2159,6 +2150,7 @@ async function searchPlayers() {
         return;
     }
 
+    lastPlayersLiveKey = null; // список меняется — live-poll снимет новую базовую точку
     container.innerHTML = `<p class="loading-text">⏳ ${tr('players.searching')}</p>`;
 
     try {
@@ -2198,6 +2190,8 @@ async function searchPlayers() {
         const ordered = sortLiveFirst(sorted, twitchByName, liveSet);
 
         container.innerHTML = renderPlayerCards(ordered, stats, twitchByName, liveSet);
+        // Базовая точка для «тихого» автообновления
+        lastPlayersLiveKey = playersLiveKey(twitchUsers, liveSet);
 
     } catch (err) {
         console.error(err);
@@ -2258,12 +2252,65 @@ async function enrichPlayersWithTwitchLive(twitchUsernames, container, playerUse
     return __twitchEnrichInFlight;
 }
 
+// «Отпечаток» live-набора: отсортированные ники тех, кто сейчас в эфире.
+// Сравниваем два отпечатка, чтобы понять, изменилось ли что-то визуально значимое.
+function playersLiveKey(twitches, liveSet) {
+    return (twitches || [])
+        .map(t => String(t).toLowerCase())
+        .filter(t => liveSet.has(t))
+        .sort()
+        .join(',');
+}
+
 // Унифицированный «обновить то, что на странице игроков»: либо поиск, либо рандом.
-function refreshPlayersPage() {
+//
+// silent = true (автообновление раз в 15с): НЕ перерисовываем DOM просто так.
+// Тихо перезапрашиваем ТОТ ЖЕ набор данных, что и полный рендер (все юзеры
+// либо результаты поиска), проверяем live-статус и перерисовываем ТОЛЬКО
+// если у кого-то появился/пропал стрим. Важно: проверяем всех, а не только
+// отрисованные карточки — вышедший в эфир игрок может быть не среди
+// показанных случайных 10, но при ререндере он поднимется наверх.
+async function refreshPlayersPage(silent = false) {
     const input = document.getElementById('playerSearchInput');
     if (!input) return;
-    if (input.value.trim().length >= 2) searchPlayers();
-    else loadRandomPlayers();
+    const query = input.value.trim();
+    const doFull = () => {
+        if (query.length >= 2) searchPlayers();
+        else loadRandomPlayers();
+    };
+    if (!silent) { doFull(); return; }
+
+    try {
+        // Тот же источник данных, что и у полного рендера
+        let twitches = [];
+        if (query.length >= 2) {
+            const safe = query.replace(/[%_\\]/g, '\\$&');
+            const { data } = await db.from('user_profile')
+                .select('username, twitch_username')
+                .ilike('username', `%${safe}%`)
+                .order('username')
+                .limit(20);
+            twitches = (data || []).map(u => u.twitch_username).filter(Boolean);
+        } else {
+            const { data } = await db.from('user_profile')
+                .select('username, twitch_username')
+                .limit(200);
+            twitches = (data || []).map(u => u.twitch_username).filter(Boolean);
+        }
+        if (twitches.length === 0) return;
+
+        const liveSet = await fetchLiveTwitchUsernames(twitches);
+        const key = playersLiveKey(twitches, liveSet);
+        if (lastPlayersLiveKey === null) {
+            // Базовая точка ещё не снята — запоминаем, без перерисовки.
+            lastPlayersLiveKey = key;
+            return;
+        }
+        if (key !== lastPlayersLiveKey) {
+            lastPlayersLiveKey = key;
+            doFull(); // кто-то вышел в эфир / закончил стрим — перерисовываем
+        }
+    } catch (e) { /* сеть могла моргнуть — попробуем в следующий тик */ }
 }
 
 // === ПРОФИЛЬ ИГРОКА ===
