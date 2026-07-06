@@ -50,6 +50,7 @@
 
             'history.title': 'История гонок',
             'history.loading': 'Загрузка истории…',
+            'history.top3': '🏆 Топ-3',
             'history.noWinner': 'Победитель не зафиксирован',
 
             'players.title': 'Поиск игроков',
@@ -246,6 +247,7 @@
 
             'history.title': 'Race history',
             'history.loading': 'Loading history…',
+            'history.top3': '🏆 Top 3',
             'history.noWinner': 'No winner recorded',
 
             'players.title': 'Player search',

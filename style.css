@@ -587,6 +587,63 @@ a { color: inherit; }
 }
 
 /* ============================================================
+   HISTORY PODIUM (топ-3 в карточках истории)
+   ============================================================ */
+.history-podium {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 1rem;
+    padding: 10px 14px;
+    background: var(--surface-2);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+}
+.history-podium-title {
+    font-size: 0.72rem;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    text-align: center;
+}
+.history-podium-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+.history-podium-medal {
+    min-width: 1.6rem;
+    text-align: center;
+    font-size: 1.1rem;
+}
+.history-podium-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-weight: 700;
+}
+.history-podium-time {
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--primary);
+    font-weight: 700;
+    white-space: nowrap;
+    font-size: 0.88rem;
+}
+.history-podium-row:first-child .history-podium-time {
+    color: #ffd700;
+    font-size: 0.92rem;
+}
+.history-podium-row:first-child .history-podium-name {
+    color: #ffd700;
+}
+
+/* ============================================================
    STATUS PILLS
    ============================================================ */
 .status {

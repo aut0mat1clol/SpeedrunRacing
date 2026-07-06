@@ -2090,11 +2090,10 @@ async function loadRandomPlayers() {
                 Object.values(twitchByName).filter(Boolean)
             );
             const sorted = sortUsersByStats(users, stats).slice(0, 30);
-            const ordered = sortLiveFirst(sorted, twitchByName, liveSet);
             const label = playerSortMode === 'wins' ? tr('players.leaderboardWins') : tr('players.leaderboardRaces');
             container.innerHTML =
                 `<p style="color:var(--text-dim);font-weight:700;font-size:0.85rem;margin:0 0 0.75rem;">${label}</p>` +
-                renderPlayerCards(ordered, stats, twitchByName, liveSet);
+                renderPlayerCards(sorted, stats, twitchByName, liveSet);
             // Базовая точка для «тихого» автообновления — по ВСЕМ юзерам
             // (silent-проверка сравнивает именно с полным набором).
             lastPlayersLiveKey = playersLiveKey(Object.values(twitchByName).filter(Boolean), liveSet);
@@ -2187,9 +2186,8 @@ async function searchPlayers() {
             fetchLiveTwitchUsernames(twitchUsers)
         ]);
         const sorted = sortUsersByStats(users, stats);
-        const ordered = sortLiveFirst(sorted, twitchByName, liveSet);
 
-        container.innerHTML = renderPlayerCards(ordered, stats, twitchByName, liveSet);
+        container.innerHTML = renderPlayerCards(sorted, stats, twitchByName, liveSet);
         // Базовая точка для «тихого» автообновления
         lastPlayersLiveKey = playersLiveKey(twitchUsers, liveSet);
 
@@ -2511,26 +2509,42 @@ async function loadRaceHistory() {
             return;
         }
 
-        // Подтягиваем победителей из снимков результатов (place = 1).
-        const winners = {};
+        // Подтягиваем топ-3 из снимков результатов (places 1, 2, 3).
+        const podiums = {};
         try {
             const { data: results } = await db
                 .from('race_results')
                 .select('race_id, player_name, total_time, is_dnf, place')
                 .in('race_id', races.map(r => r.id))
-                .eq('place', 1);
+                .in('place', [1, 2, 3])
+                .order('place', { ascending: true });
             (results || []).forEach(r => {
-                if (!r.is_dnf) winners[r.race_id] = r;
+                if (!r.is_dnf) {
+                    if (!podiums[r.race_id]) podiums[r.race_id] = [];
+                    podiums[r.race_id].push(r);
+                }
             });
-        } catch (e) { /* победители необязательны */ }
+        } catch (e) { /* топ-3 необязателен */ }
 
         const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
 
         container.innerHTML = races.map(race => {
-            const w = winners[race.id];
-            const winnerHtml = w
-                ? `<div class="meta">🥇 ${w.player_name} — <span style="font-family:JetBrains Mono,monospace;color:var(--primary);font-weight:700;">${formatTime(w.total_time)}</span></div>`
-                : `<div class="meta">${tr('history.noWinner')}</div>`;
+            const podium = podiums[race.id] || [];
+            const medals = ['🥇', '🥈', '🥉'];
+
+            let podiumHtml = '';
+            if (podium.length > 0) {
+                podiumHtml = `<div class="history-podium"><div class="history-podium-title">${tr('history.top3')}</div>${podium.map((p, i) => `
+                    <div class="history-podium-row">
+                        <span class="history-podium-medal">${medals[i] || '#' + (i + 1)}</span>
+                        <span class="history-podium-name">${escapeHtml(p.player_name)}</span>
+                        <span class="history-podium-time">${formatTime(p.total_time)}</span>
+                    </div>
+                `).join('')}</div>`;
+            } else {
+                podiumHtml = `<div class="meta">${tr('history.noWinner')}</div>`;
+            }
+
             const dateHtml = race.started_at
                 ? `<div class="meta">📅 ${new Date(race.started_at).toLocaleString(lang)}</div>`
                 : '';
@@ -2539,7 +2553,7 @@ async function loadRaceHistory() {
                 <div class="race-card" onclick="location.hash='#race/${race.id}'">
                     <h3>${race.name || race.id}</h3>
                     <div class="meta">${race.game} — ${race.category}</div>
-                    ${winnerHtml}
+                    ${podiumHtml}
                     ${dateHtml}
                     <span class="status ${race.status}">${statusLabel(race.status)}</span>
                 </div>
