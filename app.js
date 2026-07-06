@@ -48,23 +48,9 @@ let timerInterval     = null;
 let isReady           = false;
 let realtimeChannel   = null;
 
-// started_at ТЕКУЩЕГО раунда (ISO-строка). Нужен, чтобы на странице гонки
-// показывать снимок результатов именно текущего раунда, а не прошлых
-// (которые остались в истории в той же таблице race_results).
-let currentRaceStartedAt = null;
-
-// Выбранный пользователем раунд для просмотра в переключателе.
-// null = показать «текущий» раунд (live/последний); ISO-строка = конкретный
-// раунд из истории (round_started_at).
-let selectedRoundStartedAt = null;
-
 // НОВЫЕ ПЕРЕМЕННЫЕ ДЛЯ АВТОРИЗАЦИИ
 let currentUser = null;     // { id, username, role }
 let canManageCurrentRace = false; // может ли текущий пользователь управлять этой гонкой
-
-// ── Таймер сессии ─────────────────────────────────────────────
-let sessionTimerInterval = null;
-let sessionStartTime = null;
 
 // ============================================================
 // УТИЛИТЫ
@@ -86,30 +72,6 @@ function showToast(message, type = 'success') {
     toast.textContent = message;
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 2800);
-}
-
-// ============================================================
-// СЕССИЯ — ТАЙМЕР
-// ============================================================
-
-// Запустить таймер сессии (с момента входа на страницу гонки)
-function startSessionTimer() {
-    stopSessionTimer();
-    sessionStartTime = Date.now();
-    sessionTimerInterval = setInterval(() => {
-        const elapsed = Date.now() - sessionStartTime;
-        const sessionDisplay = document.getElementById('sessionTimerDisplay');
-        if (sessionDisplay) {
-            sessionDisplay.textContent = formatTime(elapsed);
-        }
-    }, 100); // обновляем 10 раз в секунду для плавности
-}
-
-function stopSessionTimer() {
-    if (sessionTimerInterval) {
-        clearInterval(sessionTimerInterval);
-        sessionTimerInterval = null;
-    }
 }
 
 // ============================================================
@@ -514,19 +476,14 @@ function showRaceList() {
     document.getElementById('raceListScreen').style.display = '';
     document.getElementById('raceScreen').style.display     = 'none';
     currentRaceId      = null;
-    selectedRoundStartedAt = null;
-    raceRoundsCache = null;
     autoStartTriggered = false;
     if (realtimeChannel) { db.removeChannel(realtimeChannel); realtimeChannel = null; }
     stopTwitchLiveWatcher();
-    stopSessionTimer();
     loadRaceList();
 }
 
-function showRaceScreen(raceId, roundParam) {
+function showRaceScreen(raceId) {
     currentRaceId      = raceId;
-    selectedRoundStartedAt = roundParam ? roundParam : null;
-    raceRoundsCache = null;
     autoStartTriggered = false;
     document.getElementById('raceListScreen').style.display = 'none';
     document.getElementById('raceScreen').style.display     = '';
@@ -539,9 +496,6 @@ function showRaceScreen(raceId, roundParam) {
     }
     
     document.getElementById('hostPanel').style.display = 'none';
-    
-    // Запускаем таймер сессии при входе на страницу гонки
-    startSessionTimer();
     
     // Принудительно загружаем данные (включая started_at)
     loadRaceData();
@@ -693,18 +647,9 @@ function updateRaceUI(race) {
     if (canManageCurrentRace) {
         const startBtn  = document.querySelector('.btn-host-start');
         const finishBtn = document.querySelector('.btn-host-finish');
-        const resetBtn = document.querySelector('.btn-host-reset');
         if (startBtn)  startBtn.disabled  = race.status !== 'waiting';
         if (finishBtn) finishBtn.disabled = race.status !== 'active';
-        // Кнопка сброса видна только для активных или завершённых гонок
-        if (resetBtn) {
-            resetBtn.style.display = (race.status === 'active' || race.status === 'finished') ? '' : 'none';
-        }
     }
-
-    // Запоминаем started_at текущего раунда — это ключ раунда в race_results
-    // и фильтр для показа снимка «текущего» раунда (см. showRaceResults).
-    currentRaceStartedAt = race.started_at || null;
 
     // === ГЛАВНОЕ ИСПРАВЛЕНИЕ: всегда обновляем raceStartTime ===
     if (race.status === 'active' && race.started_at) {
@@ -821,45 +766,7 @@ async function maybeFinalizeRace(players) {
     }
 }
 
-// Собирает отсортированный список результатов раунда из массива игроков.
-// Финишировавшие — по времени, остальные — DNF в конце.
-// Возвращает массив БЕЗ race_id/round — их добавляет вызывающий код
-// (finalizeRaceResults) при записи строк в race_results.
-function buildRoundRows(players) {
-    const finished = players
-        .filter(p => p.status === 'finished' && p.total_time > 0)
-        .sort((a, b) => (a.total_time || 0) - (b.total_time || 0));
-    const dnf = players.filter(p =>
-        !(p.status === 'finished' && p.total_time > 0));
-
-    const rows = [];
-    finished.forEach((p, i) => {
-        rows.push({
-            place:         i + 1,
-            player_id:     p.id,
-            player_name:   p.name,
-            total_time:    p.total_time,
-            is_dnf:        false,
-            timing_method: p.timing_method || null
-        });
-    });
-    dnf.forEach((p, i) => {
-        rows.push({
-            place:         finished.length + i + 1,
-            player_id:     p.id,
-            player_name:   p.name,
-            total_time:    null,
-            is_dnf:        true,
-            timing_method: p.timing_method || null
-        });
-    });
-    return rows;
-}
-
-// Сохраняет результаты ТЕКУЩЕГО раунда в race_results (та же таблица, что и
-// история). Каждый раунд = свой набор строк со своим round / round_started_at.
-// Идемпотентно: повторное сохранение того же раунда (по round_started_at)
-// обновляет его строки, а не создаёт дубль. Номер раунда = MAX(round)+1.
+// Сохранить снимок итогового топа в race_results.
 // players можно не передавать — тогда подгрузим сами.
 async function finalizeRaceResults(players) {
     if (!currentRaceId) return;
@@ -870,58 +777,45 @@ async function finalizeRaceResults(players) {
         players = data || [];
     }
 
-    const rows = buildRoundRows(players);
+    // Финишировавшие → по времени; не финишировавшие → DNF в конце.
+    const finished = players
+        .filter(p => p.status === 'finished' && p.total_time > 0)
+        .sort((a, b) => (a.total_time || 0) - (b.total_time || 0));
+    const dnf = players.filter(p =>
+        !(p.status === 'finished' && p.total_time > 0));
+
+    const rows = [];
+    finished.forEach((p, i) => {
+        rows.push({
+            race_id:       currentRaceId,
+            place:         i + 1,
+            player_id:     p.id,
+            player_name:   p.name,
+            total_time:    p.total_time,
+            is_dnf:        false,
+            timing_method: p.timing_method || null
+        });
+    });
+    dnf.forEach((p, i) => {
+        rows.push({
+            race_id:       currentRaceId,
+            place:         finished.length + i + 1,
+            player_id:     p.id,
+            player_name:   p.name,
+            total_time:    null,
+            is_dnf:        true,
+            timing_method: p.timing_method || null
+        });
+    });
+
     if (rows.length === 0) return;
 
-    // started_at текущего раунда — естественный ключ раунда (один старт = один
-    // раунд) и одновременно дата для карточки истории.
-    const { data: race, error: raceErr } = await db.from('races')
-        .select('started_at').eq('id', currentRaceId).maybeSingle();
-    if (raceErr) console.warn('[finalizeRaceResults] races:', raceErr);
-    const roundStartedAt = (race && race.started_at) || new Date().toISOString();
-
-    // Номер раунда: если для этого started_at уже есть строки — берём тот же
-    // номер (повторное сохранение раунда). Иначе — MAX(round)+1.
-    let roundNumber = 1;
-    const { data: existing } = await db.from('race_results')
-        .select('round')
-        .eq('race_id', currentRaceId)
-        .eq('round_started_at', roundStartedAt)
-        .limit(1);
-    if (existing && existing.length > 0 && existing[0].round) {
-        roundNumber = existing[0].round;
-    } else {
-        const { data: maxRow } = await db.from('race_results')
-            .select('round')
-            .eq('race_id', currentRaceId)
-            .order('round', { ascending: false })
-            .limit(1);
-        roundNumber = (maxRow && maxRow.length > 0 && maxRow[0].round) ? maxRow[0].round + 1 : 1;
-    }
-
-    // Заменяем строки ТЕКУЩЕГО раунда (на случай пересохранения / изменений состава).
-    await db.from('race_results')
-        .delete()
-        .eq('race_id', currentRaceId)
-        .eq('round_started_at', roundStartedAt);
-
-    const { error } = await db.from('race_results').insert(
-        rows.map(r => ({
-            race_id:          currentRaceId,
-            round:            roundNumber,
-            round_started_at: roundStartedAt,
-            place:            r.place,
-            player_id:        r.player_id,
-            player_name:      r.player_name,
-            total_time:       r.total_time,
-            is_dnf:           r.is_dnf,
-            timing_method:    r.timing_method
-        }))
-    );
-    if (error) console.error('Ошибка сохранения результатов раунда:', error);
+    // upsert по (race_id, player_id), чтобы повторная фиксация не падала.
+    const { error } = await db
+        .from('race_results')
+        .upsert(rows, { onConflict: 'race_id,player_id' });
+    if (error) console.error('Ошибка сохранения снимка топа:', error);
 }
-
-
 
 // ============================================================
 // СЕТКА ИГРОКОВ (сокращённая версия для читаемости)
@@ -1550,91 +1444,6 @@ async function hostFinishRace() {
     else await loadRaceData();
 }
 
-// ═══ СБРОС ГОНКИ ═══
-// Сбрасывает гонку: возвращает статус на waiting, очищает время старта,
-// сбрасывает всех игроков на статус 'joined' с очисткой времени и сплитов.
-async function hostResetRace() {
-    if (!currentRaceId || !canManageCurrentRace) return;
-    if (!confirm(tr('confirm.resetRace'))) return;
-
-    try {
-        // 0. АВТО-СОХРАНЕНИЕ: перед сбросом фиксируем текущий раунд в race_results
-        //    (со своим round / round_started_at), чтобы он остался в истории.
-        //    Нет результатов — пропускаем.
-        let roundSaved = false;
-        try {
-            const { data: playersData } = await db.from('players')
-                .select('id, name, status, total_time, timing_method')
-                .eq('race_id', currentRaceId);
-            const hasResults = playersData && playersData.some(p =>
-                p.status === 'finished' || (p.total_time && p.total_time > 0)
-            );
-            if (hasResults) {
-                await finalizeRaceResults(playersData);
-                roundSaved = true;
-                raceRoundsCache = null;        // появился новый раунд — обновим список
-                selectedRoundStartedAt = null; // вернёмся к виду «текущее состояние»
-            }
-        } catch (e) {
-            console.warn('[hostResetRace] Авто-сохранение не удалось:', e);
-        }
-
-        // 1. Сбрасываем статус гонки на waiting и очищаем время старта.
-        //    ВАЖНО: race_results НЕ трогаем — это и есть история раундов.
-        //    Прошлые раунды перестанут показываться как «текущие», потому что
-        //    round_started_at у них не совпадёт с обнулённым started_at.
-        const { error: raceError } = await db.from('races')
-            .update({ 
-                status: 'waiting',
-                started_at: null
-            })
-            .eq('id', currentRaceId);
-
-        if (raceError) throw raceError;
-
-        // 2. Сбрасываем всех игроков: статус → 'joined', очищаем время и сплиты
-        const { data: players } = await db
-            .from('players')
-            .select('id')
-            .eq('race_id', currentRaceId);
-
-        if (players && players.length > 0) {
-            for (const player of players) {
-                await db.from('players')
-                    .update({
-                        status: 'joined',
-                        total_time: null,
-                        current_split: null,
-                        split_count: 0,
-                        splits: null,
-                        split_names: null
-                    })
-                    .eq('id', player.id);
-            }
-        }
-
-        // 3. Очищаем записи о готовности
-        await db.from('ready')
-            .delete()
-            .eq('race_id', currentRaceId);
-
-        // 4. Очищаем локальные данные (race_results намеренно НЕ чистим —
-        //    там лежит история всех раундов этой гонки)
-        raceStartTime = null;
-        currentRaceStartedAt = null;
-        Object.keys(liveTimeAnchors).forEach(key => delete liveTimeAnchors[key]);
-        autoStartTriggered = false;
-
-        showToast(roundSaved ? tr('toast.raceResetSaved') : tr('toast.raceReset'));
-        await loadRaceData();
-        await loadPlayers();
-
-    } catch (err) {
-        console.error('[hostResetRace] Ошибка:', err);
-        alert(tr('alert.resetError') + err.message);
-    }
-}
-
 async function hostKickPlayer(playerId, event) {
     event.stopPropagation();
     if (!canManageCurrentRace) return;
@@ -1677,163 +1486,68 @@ async function hostDeleteRace() {
     }
 }
 
-// ═══ ИСТОРИЯ РАУНДОВ ГОНКИ (переключатель на странице гонки) ═══
-// Кеш списка раундов: обновляется раз в ROUNDS_CACHE_TTL, а также сбрасывается
-// при входе на гонку и при сбросе (появился новый раунд).
-let raceRoundsCache = null;
-let raceRoundsCacheAt = 0;
-const ROUNDS_CACHE_TTL = 10000; // 10 сек
-
-// Возвращает уникальные раунды гонки: [{round, round_started_at}] по
-// возрастанию номера. Кешированно, чтобы не дёргать БД при каждом realtime-обновлении.
-async function fetchRaceRounds() {
-    if (!currentRaceId) return [];
-    if (raceRoundsCache && Date.now() - raceRoundsCacheAt < ROUNDS_CACHE_TTL) {
-        return raceRoundsCache;
-    }
-    try {
-        const { data } = await db.from('race_results')
-            .select('round, round_started_at')
-            .eq('race_id', currentRaceId)
-            .order('round', { ascending: true });
-        const map = new Map();
-        (data || []).forEach(r => {
-            if (r.round_started_at && !map.has(r.round_started_at)) {
-                map.set(r.round_started_at, r.round);
-            }
-        });
-        raceRoundsCache = [...map.entries()].map(([started_at, round]) => ({
-            round_started_at: started_at,
-            round
-        }));
-        raceRoundsCacheAt = Date.now();
-        return raceRoundsCache;
-    } catch (e) {
-        return raceRoundsCache || [];
-    }
-}
-
-// Отрисовать <select> переключателя раундов. Показываем, только если есть
-// из чего выбирать (>1 опции). Текущий (live) раунд — отдельной опцией,
-// если он ещё не сохранён в историю.
-function renderRoundSelector(rounds) {
-    const sel = document.getElementById('roundSelector');
-    if (!sel) return;
-
-    const hasLive = !!currentRaceStartedAt;
-    const liveInHistory = rounds.some(r => r.round_started_at === currentRaceStartedAt);
-    const totalOptions = rounds.length + (hasLive && !liveInHistory ? 1 : 0);
-
-    // Один раунд — переключатель не нужен.
-    if (totalOptions <= 1) {
-        sel.style.display = 'none';
-        return;
-    }
-    sel.style.display = '';
-
-    // Эффективный выбранный раунд (с учётом дефолтов: выбранный → live → последний).
-    const effectiveSelected =
-        selectedRoundStartedAt ||
-        currentRaceStartedAt ||
-        (rounds.length > 0 ? rounds[rounds.length - 1].round_started_at : null);
-
-    let html = '';
-    if (hasLive && !liveInHistory) {
-        const isSel = !selectedRoundStartedAt;
-        html += `<option value="" ${isSel ? 'selected' : ''}>${tr('race.roundLive')}</option>`;
-    }
-    rounds.forEach(r => {
-        const isCurrent = r.round_started_at === currentRaceStartedAt;
-        const label = tr('race.round') + ' ' + r.round + (isCurrent ? ' (' + tr('race.roundCurrentShort') + ')' : '');
-        const isSel = effectiveSelected === r.round_started_at;
-        html += `<option value="${encodeURIComponent(r.round_started_at)}" ${isSel ? 'selected' : ''}>${escapeHtml(label)}</option>`;
-    });
-    sel.innerHTML = html;
-}
-
-// Обработчик выбора раунда в переключателе.
-function onRoundSelected(value) {
-    selectedRoundStartedAt = value ? decodeURIComponent(value) : null;
-    showRaceResults();
-}
-
-// ═══ Показать результаты гонки (live-топ + снимок + выбор раунда) ═══
+// ═══ Показать результаты гонки (live-топ + снимок) ═══
+// Если у гонки есть сохранённый снимок (race_results) — показываем его.
+// Иначе строим живой топ из текущих финишировавших игроков.
 async function showRaceResults() {
     const container  = document.getElementById('raceResultsContainer');
     const resultsDiv = document.getElementById('raceResults');
     if (!container || !resultsDiv) return;
 
     try {
-        // 0) Список раундов + переключатель. Кешированно, чтобы не дёргать БД
-        //    при каждом realtime-обновлении.
-        const rounds = await fetchRaceRounds();
-        renderRoundSelector(rounds);
+        // 1) Пытаемся показать сохранённый снимок завершённой гонки.
+        const { data: snapshot } = await db
+            .from('race_results')
+            .select('*')
+            .eq('race_id', currentRaceId)
+            .order('place', { ascending: true });
 
-        // Раунд для показа:
-        //  • выбранный пользователем (selectedRoundStartedAt),
-        //  • иначе текущий live (currentRaceStartedAt),
-        //  • иначе — последний сохранённый (актуально для waiting после сброса).
-        const viewingStartedAt =
-            selectedRoundStartedAt ||
-            currentRaceStartedAt ||
-            (rounds.length > 0 ? rounds[rounds.length - 1].round_started_at : null);
-
-        // 1) Показываем снимок раунда (сохранённые результаты).
-        if (viewingStartedAt) {
-            const { data: snapshot } = await db
-                .from('race_results')
-                .select('*')
-                .eq('race_id', currentRaceId)
-                .eq('round_started_at', viewingStartedAt)
-                .order('place', { ascending: true });
-
-            if (snapshot && snapshot.length > 0) {
-                const rows = snapshot.map(r => ({
-                    name: r.player_name,
-                    total_time: r.total_time,
-                    is_dnf: r.is_dnf,
-                    timing_method: r.timing_method,
-                    place: r.place
-                }));
-                container.innerHTML = renderResultsHtml(rows, { finalized: true });
-                resultsDiv.style.display = 'block';
-                return;
-            }
+        if (snapshot && snapshot.length > 0) {
+            const rows = snapshot.map(r => ({
+                name: r.player_name,
+                total_time: r.total_time,
+                is_dnf: r.is_dnf,
+                timing_method: r.timing_method,
+                place: r.place
+            }));
+            container.innerHTML = renderResultsHtml(rows, { finalized: true });
+            resultsDiv.style.display = 'block';
+            return;
         }
 
-        // 2) Нет снимка. Если это текущий live-раунд — показываем живой топ.
-        const isLive = !selectedRoundStartedAt && viewingStartedAt === currentRaceStartedAt;
-        if (isLive) {
-            const { data: players } = await db
-                .from('players')
-                .select('*')
-                .eq('race_id', currentRaceId);
+        // 2) Иначе — живой топ из игроков.
+        const { data: players } = await db
+            .from('players')
+            .select('*')
+            .eq('race_id', currentRaceId);
 
-            if (players && players.length > 0) {
-                const finished = players
-                    .filter(p => p.status === 'finished' && p.total_time > 0)
-                    .sort((a, b) => (a.total_time || 0) - (b.total_time || 0))
-                    .map((p, i) => ({
-                        name: p.name,
-                        total_time: p.total_time,
-                        is_dnf: false,
-                        timing_method: p.timing_method,
-                        place: i + 1
-                    }));
-
-                if (finished.length > 0) {
-                    container.innerHTML = renderResultsHtml(finished, {
-                        finalized: false,
-                        finishedCount: finished.length,
-                        totalCount: players.length
-                    });
-                    resultsDiv.style.display = 'block';
-                    return;
-                }
-            }
+        if (!players || players.length === 0) {
+            resultsDiv.style.display = 'none';
+            return;
         }
 
-        resultsDiv.style.display = 'none';
+        const finished = players
+            .filter(p => p.status === 'finished' && p.total_time > 0)
+            .sort((a, b) => (a.total_time || 0) - (b.total_time || 0))
+            .map((p, i) => ({
+                name: p.name,
+                total_time: p.total_time,
+                is_dnf: false,
+                timing_method: p.timing_method,
+                place: i + 1
+            }));
+
+        if (finished.length === 0) {
+            resultsDiv.style.display = 'none';
+            return;
+        }
+
+        container.innerHTML = renderResultsHtml(finished, {
+            finalized: false,
+            finishedCount: finished.length,
+            totalCount: players.length
+        });
+        resultsDiv.style.display = 'block';
 
     } catch (err) {
         console.error('Ошибка загрузки результатов:', err);
@@ -2627,27 +2341,26 @@ async function loadPlayerProfile(username) {
         const isOwnProfile = currentUser && currentUser.username &&
             currentUser.username.toLowerCase() === user.username.toLowerCase();
 
-        // ШАГ 1. Параллельно: результаты игрока по раундам (race_results) +
-        // (если есть Twitch) проверка live. Каждая строка = участие в одном
-        // раунде (отличаются round / round_started_at).
-        const playerResultsPromise = db
+        // ШАГ 1. Параллельно: история гонок + (если есть Twitch) проверка live.
+        // Карточки со статистикой покажем только после этого, но заголовок
+        // профиля можно отрисовать уже сейчас, чтобы экран не висел пустым.
+        const raceResultsPromise = db
             .from('race_results')
-            .select('race_id, round, round_started_at, place, total_time, is_dnf, timing_method')
+            .select('race_id, place, total_time, is_dnf, timing_method')
             .eq('player_name', user.username)
-            .order('round_started_at', { ascending: false })
-            .limit(50);
+            .order('place', { ascending: true });
         const livePromise = user.twitch_username
             ? fetchLiveTwitchUsernames([user.twitch_username]).then(s => s.has(user.twitch_username.toLowerCase()))
             : Promise.resolve(false);
 
-        const [resultsRes, isTwitchLive] = await Promise.all([playerResultsPromise, livePromise]);
+        const [resultsRes, isTwitchLive] = await Promise.all([raceResultsPromise, livePromise]);
 
         const rows = resultsRes.data || [];
         let racesById = {};
         if (rows.length > 0) {
             const { data: races } = await db
                 .from('races')
-                .select('id, name, game, category')
+                .select('id, name, game, category, started_at')
                 .in('id', [...new Set(rows.map(r => r.race_id))]);
             (races || []).forEach(r => { racesById[r.id] = r; });
         }
@@ -2741,8 +2454,8 @@ async function loadPlayerProfile(username) {
             html += `<div class="empty-state"><p>${tr('profile.noRaces')}</p></div>`;
         } else {
             const sorted = [...rows].sort((a, b) => {
-                const da = a.round_started_at || '';
-                const db_ = b.round_started_at || '';
+                const da = racesById[a.race_id]?.started_at || '';
+                const db_ = racesById[b.race_id]?.started_at || '';
                 return db_.localeCompare(da);
             }).slice(0, 20);
             const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
@@ -2750,12 +2463,12 @@ async function loadPlayerProfile(username) {
                 const race = racesById[r.race_id];
                 const medal = r.is_dnf ? 'DNF' : r.place === 1 ? '🥇' : r.place === 2 ? '🥈' : r.place === 3 ? '🥉' : `#${r.place}`;
                 const time = r.is_dnf ? '—' : formatTime(r.total_time);
-                const raceName = race ? escapeHtml(race.name || r.race_id) : r.race_id;
+                const raceName = race ? escapeHtml(race.name || race.id) : r.race_id;
                 const raceMeta = race ? `${escapeHtml(race.game)} — ${escapeHtml(race.category)}` : '';
-                const date = r.round_started_at ? new Date(r.round_started_at).toLocaleDateString(lang) : '';
+                const date = race?.started_at ? new Date(race.started_at).toLocaleDateString(lang) : '';
                 return `
                     <div style="background:var(--surface-hover);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;${r.is_dnf ? 'opacity:0.55;' : ''}"
-                         onclick="location.hash='#race/${r.race_id}${r.round_started_at ? '?round=' + encodeURIComponent(r.round_started_at) : ''}'">
+                         onclick="location.hash='#race/${r.race_id}'">
                         <div style="display:flex;align-items:center;gap:12px;min-width:0;">
                             <span style="font-size:1.2rem;min-width:2.2rem;text-align:center;font-weight:700;">${medal}</span>
                             <div style="min-width:0;">
@@ -2776,80 +2489,59 @@ async function loadPlayerProfile(username) {
 
 
 
+
 // === ИСТОРИЯ ГОНОК ===
 async function loadRaceHistory() {
     const container = document.getElementById('raceHistoryContainer');
     if (!container) return;
 
     try {
-        // История живёт прямо в race_results: каждый раунд = набор строк со своим
-        // round_started_at. Тянем недавние строки и группируем по (race_id, round).
-        const { data: results, error } = await db
-            .from('race_results')
-            .select('race_id, round, round_started_at, player_name, total_time, is_dnf, place, timing_method')
-            .not('round_started_at', 'is', null)
-            .order('round_started_at', { ascending: false })
-            .limit(500); // с запасом: ~50 раундов по ~8 участников
+        // Завершённые гонки, последние — сверху.
+        const { data: races, error } = await db
+            .from('races')
+            .select('*')
+            .eq('status', 'finished')
+            .order('started_at', { ascending: false })
+            .limit(30);
 
         if (error) throw error;
 
-        if (!results || results.length === 0) {
+        if (!races || races.length === 0) {
             container.innerHTML = `<div class="empty-state"><p>${tr('empty.noHistory')}</p></div>`;
             return;
         }
 
-        // Группируем строки в раунды (ключ = race_id|round_started_at).
-        // Победитель = place === 1 и не DNF. Сохраняем порядок «свежие сверху».
-        const roundsMap = new Map();
-        for (const r of results) {
-            const key = r.race_id + '|' + r.round_started_at;
-            if (!roundsMap.has(key)) {
-                roundsMap.set(key, {
-                    race_id: r.race_id,
-                    round: r.round,
-                    round_started_at: r.round_started_at,
-                    timing_method: r.timing_method,
-                    winner: null
-                });
-            }
-            const round = roundsMap.get(key);
-            if (!round.winner && !r.is_dnf && r.place === 1) {
-                round.winner = r;
-            }
-        }
-
-        // Метаданные гонок (name/game/category берём из races — они не меняются
-        // при сбросе, только status/started_at).
-        const raceIds = [...new Set([...roundsMap.values()].map(r => r.race_id))];
-        const racesById = {};
-        if (raceIds.length > 0) {
-            const { data: races } = await db.from('races')
-                .select('id, name, game, category')
-                .in('id', raceIds);
-            (races || []).forEach(r => { racesById[r.id] = r; });
-        }
+        // Подтягиваем победителей из снимков результатов (place = 1).
+        const winners = {};
+        try {
+            const { data: results } = await db
+                .from('race_results')
+                .select('race_id, player_name, total_time, is_dnf, place')
+                .in('race_id', races.map(r => r.id))
+                .eq('place', 1);
+            (results || []).forEach(r => {
+                if (!r.is_dnf) winners[r.race_id] = r;
+            });
+        } catch (e) { /* победители необязательны */ }
 
         const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
 
-        container.innerHTML = [...roundsMap.values()].map(round => {
-            const race = racesById[round.race_id];
-            const isGameTime = round.timing_method === 'GameTime';
-            const gtBadge = isGameTime
-                ? ' <span style="font-size:0.6rem;color:#ffd93d;border:1px solid #ffd93d;border-radius:5px;padding:1px 5px;vertical-align:middle;">GT</span>'
-                : '';
-            const winnerHtml = round.winner
-                ? `<div class="meta">🥇 ${round.winner.player_name} — <span style="font-family:JetBrains Mono,monospace;color:var(--primary);font-weight:700;">${formatTime(round.winner.total_time)}</span></div>`
+        container.innerHTML = races.map(race => {
+            const w = winners[race.id];
+            const winnerHtml = w
+                ? `<div class="meta">🥇 ${w.player_name} — <span style="font-family:JetBrains Mono,monospace;color:var(--primary);font-weight:700;">${formatTime(w.total_time)}</span></div>`
                 : `<div class="meta">${tr('history.noWinner')}</div>`;
-            const dateHtml = round.round_started_at
-                ? `<div class="meta">📅 ${new Date(round.round_started_at).toLocaleString(lang)}</div>`
+            const dateHtml = race.started_at
+                ? `<div class="meta">📅 ${new Date(race.started_at).toLocaleString(lang)}</div>`
                 : '';
 
             return `
-                <div class="race-card" onclick="location.hash='#race/${round.race_id}?round=${encodeURIComponent(round.round_started_at)}'">
-                    <h3>${race ? (escapeHtml(race.name) || round.race_id) : round.race_id}${gtBadge}</h3>
-                    <div class="meta">${race ? escapeHtml(race.game) || '' : ''}${race && race.category ? ' — ' + escapeHtml(race.category) : ''}</div>
+                <div class="race-card" onclick="location.hash='#race/${race.id}'">
+                    <h3>${race.name || race.id}</h3>
+                    <div class="meta">${race.game} — ${race.category}</div>
                     ${winnerHtml}
                     ${dateHtml}
+                    <span class="status ${race.status}">${statusLabel(race.status)}</span>
                 </div>
             `;
         }).join('');

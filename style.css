@@ -525,20 +525,6 @@ a { color: inherit; }
 }
 .btn-danger:hover { background: var(--danger); color: #fff; }
 
-.btn-warning {
-    background: transparent;
-    color: #e8a830;
-    border-color: color-mix(in srgb, #e8a830 50%, transparent);
-}
-.btn-warning:hover { background: #e8a830; color: #131a10; }
-
-.btn-save {
-    background: transparent;
-    color: #5c9dff;
-    border-color: color-mix(in srgb, #5c9dff 50%, transparent);
-}
-.btn-save:hover { background: #5c9dff; color: #131a10; }
-
 .btn:disabled { opacity: .45; cursor: not-allowed; transform: none !important; box-shadow: none; }
 
 /* ============================================================
