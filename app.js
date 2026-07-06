@@ -602,17 +602,12 @@ async function loadRaceData() {
                 const isMaster = currentUser.role === 'master-host';
                 canManageCurrentRace = isOwner || isMaster;
                 
-                // Показываем панель только если есть права И гонка не завершена
-                const isFinished = race.status === 'finished';
-                document.getElementById('hostPanel').style.display = (canManageCurrentRace && !isFinished) ? '' : 'none';
+                // Показываем панель только если есть права
+                document.getElementById('hostPanel').style.display = canManageCurrentRace ? '' : 'none';
                 
                 // Кнопка удаления гонки — только для master-host
                 const deleteBtn = document.getElementById('hostDeleteBtn');
                 if (deleteBtn) deleteBtn.style.display = currentUser.role === 'master-host' ? '' : 'none';
-
-                // Кнопка «Сохранить в историю» — для активных гонок
-                const saveBtn = document.getElementById('hostSaveBtn');
-                if (saveBtn) saveBtn.style.display = (canManageCurrentRace && race.status === 'active') ? '' : 'none';
             }
         }
     } catch (err) { console.error(err); }
@@ -675,46 +670,6 @@ function updateRaceUI(race) {
         const rr = document.getElementById('raceResults');
         if (rr) rr.style.display = 'none';
     }
-
-    // Если у гонки есть сохранённые результаты (снимок в истории) — скрываем
-    // интерактивные элементы: панель хоста, готовность, сетку игроков.
-    checkHistoryMode();
-}
-
-// Проверяет, есть ли у текущей гонки сохранённый снимок в race_results,
-// и если да — переключает страницу в «режим истории» (только результаты).
-async function checkHistoryMode() {
-    if (!currentRaceId) return;
-    try {
-        const { data: snapshot } = await db
-            .from('race_results')
-            .select('race_id')
-            .eq('race_id', currentRaceId)
-            .limit(1);
-        const hasSavedResults = snapshot && snapshot.length > 0;
-
-        const hostPanel = document.getElementById('hostPanel');
-        const readyCount = document.querySelector('.ready-count');
-        const playersGrid = document.getElementById('playersGrid');
-        const playersHeader = playersGrid ? playersGrid.previousElementSibling : null;
-        const lastUpdated = document.getElementById('lastUpdated');
-
-        if (hasSavedResults) {
-            // Режим истории: скрываем всё кроме результатов
-            if (hostPanel) hostPanel.style.display = 'none';
-            if (readyCount) readyCount.style.display = 'none';
-            if (playersHeader && playersHeader.classList.contains('section-header')) playersHeader.style.display = 'none';
-            if (playersGrid) playersGrid.style.display = 'none';
-            if (lastUpdated) lastUpdated.style.display = 'none';
-            stopLiveTimer();
-        } else {
-            // Обычный режим: показываем всё обратно
-            if (readyCount) readyCount.style.display = '';
-            if (playersHeader && playersHeader.classList.contains('section-header')) playersHeader.style.display = '';
-            if (playersGrid) playersGrid.style.display = '';
-            if (lastUpdated) lastUpdated.style.display = '';
-        }
-    } catch (e) { /* необязательно */ }
 }
 
 // Кэш ников Twitch участников по имени игрока, чтобы не дёргать users
@@ -1487,17 +1442,6 @@ async function hostFinishRace() {
 
     if (error) alert(tr('alert.error') + error.message);
     else await loadRaceData();
-}
-
-// ═══ СОХРАНИТЬ В ИСТОРИЮ (без завершения гонки) ═══
-async function saveRaceToHistory() {
-    if (!currentRaceId || !canManageCurrentRace) return;
-    if (!confirm(tr('confirm.saveToHistory'))) return;
-
-    await finalizeRaceResults();
-    showToast(tr('toast.savedToHistory'));
-    // Перезагружаем — теперь showRaceResults() покажет сохранённый снимок
-    await loadRaceData();
 }
 
 async function hostKickPlayer(playerId, event) {
@@ -2552,26 +2496,11 @@ async function loadRaceHistory() {
     if (!container) return;
 
     try {
-        // Все гонки, у которых есть записи в race_results (сохранённые или завершённые).
-        const { data: resultRaces, error: rrErr } = await db
-            .from('race_results')
-            .select('race_id')
-            .order('race_id');
-
-        if (rrErr) throw rrErr;
-
-        const raceIds = [...new Set((resultRaces || []).map(r => r.race_id))];
-
-        if (raceIds.length === 0) {
-            container.innerHTML = `<div class="empty-state"><p>${tr('empty.noHistory')}</p></div>`;
-            return;
-        }
-
-        // Загружаем данные гонок
+        // Завершённые гонки, последние — сверху.
         const { data: races, error } = await db
             .from('races')
             .select('*')
-            .in('id', raceIds)
+            .eq('status', 'finished')
             .order('started_at', { ascending: false })
             .limit(30);
 
@@ -2582,61 +2511,35 @@ async function loadRaceHistory() {
             return;
         }
 
-        // Подтягиваем ВСЕ результаты (не только победителей)
-        const allResults = {};
+        // Подтягиваем победителей из снимков результатов (place = 1).
+        const winners = {};
         try {
             const { data: results } = await db
                 .from('race_results')
-                .select('*')
+                .select('race_id, player_name, total_time, is_dnf, place')
                 .in('race_id', races.map(r => r.id))
-                .order('place', { ascending: true });
+                .eq('place', 1);
             (results || []).forEach(r => {
-                if (!allResults[r.race_id]) allResults[r.race_id] = [];
-                allResults[r.race_id].push(r);
+                if (!r.is_dnf) winners[r.race_id] = r;
             });
-        } catch (e) { /* необязательно */ }
+        } catch (e) { /* победители необязательны */ }
 
         const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
 
         container.innerHTML = races.map(race => {
-            const results = allResults[race.id] || [];
+            const w = winners[race.id];
+            const winnerHtml = w
+                ? `<div class="meta">🥇 ${w.player_name} — <span style="font-family:JetBrains Mono,monospace;color:var(--primary);font-weight:700;">${formatTime(w.total_time)}</span></div>`
+                : `<div class="meta">${tr('history.noWinner')}</div>`;
             const dateHtml = race.started_at
-                ? `<div class="meta" style="margin-bottom:0.6rem;">📅 ${new Date(race.started_at).toLocaleString(lang)}</div>`
+                ? `<div class="meta">📅 ${new Date(race.started_at).toLocaleString(lang)}</div>`
                 : '';
 
-            // Рендерим таблицу результатов
-            let resultsHtml = '';
-            if (results.length > 0) {
-                // Разделяем на финишировавших и DNF
-                const finishedRows = results.filter(r => !r.is_dnf);
-                const dnfRows = results.filter(r => r.is_dnf);
-                const allRows = [...finishedRows, ...dnfRows];
-
-                resultsHtml = '<div style="display:flex;flex-direction:column;gap:0.35rem;margin:0.5rem 0;">' +
-                    allRows.map(r => {
-                        const medal = r.is_dnf ? 'DNF'
-                            : r.place === 1 ? '🥇' : r.place === 2 ? '🥈' : r.place === 3 ? '🥉' : `#${r.place}`;
-                        const time = r.is_dnf ? '—' : formatTime(r.total_time);
-                        const gt = r.timing_method === 'GameTime'
-                            ? '<span style="font-size:0.65rem;color:#ffd93d;margin-right:3px;">GT</span>' : '';
-                        return `
-                            <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;${r.is_dnf ? 'opacity:0.5;' : ''}">
-                                <span style="display:flex;align-items:center;gap:8px;">
-                                    <span style="font-size:0.95rem;min-width:1.8rem;text-align:center;font-weight:700;">${medal}</span>
-                                    <span style="font-weight:600;font-family:JetBrains Mono,monospace;font-size:0.85rem;">${escapeHtml(r.player_name)}</span>
-                                </span>
-                                <span style="font-family:JetBrains Mono,monospace;font-size:0.85rem;color:var(--primary);font-weight:700;">${gt}${time}</span>
-                            </div>`;
-                    }).join('') + '</div>';
-            } else {
-                resultsHtml = `<div class="meta">${tr('history.noWinner')}</div>`;
-            }
-
             return `
-                <div class="race-card" onclick="location.hash='#race/${race.id}'" style="cursor:pointer;">
-                    <h3>${race.name || race.id} ${race.timing_method === 'GameTime' ? '<span style="font-size:0.65rem;color:#ffd93d;border:1px solid #ffd93d;border-radius:5px;padding:1px 5px;vertical-align:middle;">GT</span>' : ''}</h3>
+                <div class="race-card" onclick="location.hash='#race/${race.id}'">
+                    <h3>${race.name || race.id}</h3>
                     <div class="meta">${race.game} — ${race.category}</div>
-                    ${resultsHtml}
+                    ${winnerHtml}
                     ${dateHtml}
                     <span class="status ${race.status}">${statusLabel(race.status)}</span>
                 </div>
