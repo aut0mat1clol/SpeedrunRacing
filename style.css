@@ -1458,3 +1458,8 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
     background: #9147ff;
     opacity: 1;
 }
+
+/* OBS Modal */
+.modal.active {
+    display: flex !important;
+}

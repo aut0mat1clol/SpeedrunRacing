@@ -138,6 +138,7 @@
 
             <div class="section-header">
                 <h2 data-i18n="race.players">Участники</h2>
+                <button id="obsOverlayBtn" class="btn btn-ghost" onclick="showObsSettingsModal()" data-i18n="race.obsBtn" style="display:none;">📺 OBS Overlay</button>
             </div>
 
             <div id="playersGrid" class="players-grid">
@@ -314,6 +315,70 @@
       в порядке объявления. Это даёт намного более быстрый FCP/LCP.
       config.js (если есть) должен идти до app.js — он у тебя и так раньше.
     -->
+<!-- OBS Settings Modal -->
+<div class="modal" id="obsSettingsModal">
+    <div class="modal-content">
+        <h2 data-i18n="obs.title">Настройки OBS Overlay</h2>
+        
+        <label for="obsPlayerSelect" data-i18n="obs.player">Игрок</label>
+        <select class="modal-input" id="obsPlayerSelect" style="margin-bottom:1rem;"></select>
+        
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:0.5rem;">
+            <input type="checkbox" id="obsShowName" checked onchange="generateObsUrl()">
+            <span data-i18n="obs.showName">Показывать ник</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:0.5rem;">
+            <input type="checkbox" id="obsShowTimer" checked onchange="generateObsUrl()">
+            <span data-i18n="obs.showTimer">Показывать таймер</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:0.5rem;">
+            <input type="checkbox" id="obsShowSplit" checked onchange="generateObsUrl()">
+            <span data-i18n="obs.showSplit">Показывать текущий сплит</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:1rem;">
+            <input type="checkbox" id="obsShowMillis" checked onchange="generateObsUrl()">
+            <span data-i18n="obs.showMillis">Показывать миллисекунды</span>
+        </label>
+
+        <label for="obsPosition" data-i18n="obs.position">Расположение</label>
+        <select class="modal-input" id="obsPosition" style="margin-bottom:1rem;" onchange="generateObsUrl()">
+            <option value="tl" data-i18n="obs.pos.tl">Сверху Слева</option>
+            <option value="tc" data-i18n="obs.pos.tc">Сверху по Центру</option>
+            <option value="tr" data-i18n="obs.pos.tr">Сверху Справа</option>
+            <option value="bl" data-i18n="obs.pos.bl">Снизу Слева</option>
+            <option value="bc" data-i18n="obs.pos.bc">Снизу по Центру</option>
+            <option value="br" data-i18n="obs.pos.br">Снизу Справа</option>
+        </select>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem;">
+            <div>
+                <label for="obsTimerColor" data-i18n="obs.timerColor">Цвет таймера</label>
+                <input type="color" class="modal-input" id="obsTimerColor" value="#ffffff" style="padding:4px;height:42px;cursor:pointer;" onchange="generateObsUrl()">
+            </div>
+            <div>
+                <label for="obsNameColor" data-i18n="obs.nameColor">Цвет ника</label>
+                <input type="color" class="modal-input" id="obsNameColor" value="#6aad38" style="padding:4px;height:42px;cursor:pointer;" onchange="generateObsUrl()">
+            </div>
+            <div>
+                <label for="obsSplitColor" data-i18n="obs.splitColor">Цвет сплита</label>
+                <input type="color" class="modal-input" id="obsSplitColor" value="#a0a0a0" style="padding:4px;height:42px;cursor:pointer;" onchange="generateObsUrl()">
+            </div>
+            <div>
+                <label for="obsBg" data-i18n="obs.bgColor">Фон (transparent)</label>
+                <input type="text" class="modal-input" id="obsBg" value="transparent" placeholder="transparent" oninput="generateObsUrl()">
+            </div>
+        </div>
+
+        <label for="obsUrl" data-i18n="obs.url">URL для Browser Source</label>
+        <input class="modal-input" id="obsUrl" readonly onclick="this.select()">
+
+        <div class="modal-actions" style="margin-top:1rem;">
+            <button class="btn btn-ghost" onclick="closeObsSettingsModal()" data-i18n="auth.cancel">Закрыть</button>
+            <button class="btn btn-primary" onclick="copyObsUrl()" data-i18n="obs.copy">Копировать URL</button>
+        </div>
+    </div>
+</div>
+
     <script defer src="theme.js?v=20260705-1"></script>
     <script defer src="i18n.js?v=20260705-3"></script>
     <script defer src="config.js?v=20260705-1"></script>

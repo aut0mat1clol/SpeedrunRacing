@@ -224,6 +224,8 @@ async function loginUser() {
 
         if (currentRaceId) {
             document.getElementById('hostPanel').style.display = isHost ? '' : 'none';
+            const obsBtn = document.getElementById('obsOverlayBtn');
+            if (obsBtn) obsBtn.style.display = isHost ? '' : 'none';
             loadRaceData();
         } else {
             loadRaceList();
@@ -299,6 +301,8 @@ async function registerUser() {
         loadUserCount();
         if (currentRaceId) {
             document.getElementById('hostPanel').style.display = 'none';
+            const obsBtn = document.getElementById('obsOverlayBtn');
+            if (obsBtn) obsBtn.style.display = 'none';
         } else {
             loadRaceList();
         }
@@ -494,9 +498,9 @@ function showRaceScreen(raceId) {
             canManageCurrentRace = true;
         }
     }
-    
     document.getElementById('hostPanel').style.display = 'none';
-    
+    const obsBtn = document.getElementById('obsOverlayBtn');
+    if (obsBtn) obsBtn.style.display = 'none';
     // Принудительно загружаем данные (включая started_at)
     loadRaceData();
     setupRealtimeListeners();
@@ -590,13 +594,7 @@ async function loadRaceData() {
             .from('races').select('*').eq('id', currentRaceId).single();
         if (error) throw error;
         if (race) { 
-            // Сначала обновляем UI (и устанавливаем raceStartTime)
-            updateRaceUI(race); 
-            
-            // Затем загружаем игроков (живой таймер будет работать)
-            await loadPlayers(); 
-            
-            // Проверяем права на управление
+            // Проверяем права на управление до обновления UI
             if (currentUser) {
                 const isOwner = race.created_by === currentUser.id;
                 const isMaster = currentUser.role === 'master-host';
@@ -604,11 +602,21 @@ async function loadRaceData() {
                 
                 // Показываем панель только если есть права
                 document.getElementById('hostPanel').style.display = canManageCurrentRace ? '' : 'none';
+                const obsBtn = document.getElementById('obsOverlayBtn');
+                if (obsBtn) obsBtn.style.display = canManageCurrentRace ? '' : 'none';
                 
                 // Кнопка удаления гонки — только для master-host
                 const deleteBtn = document.getElementById('hostDeleteBtn');
                 if (deleteBtn) deleteBtn.style.display = currentUser.role === 'master-host' ? '' : 'none';
+            } else {
+                canManageCurrentRace = false;
             }
+
+            // Сначала обновляем UI (и устанавливаем raceStartTime, дизейблим кнопки если надо)
+            updateRaceUI(race); 
+            
+            // Затем загружаем игроков (живой таймер будет работать)
+            await loadPlayers(); 
         }
     } catch (err) { console.error(err); }
 }
@@ -1415,6 +1423,13 @@ function showAutoStartNotice() {
 
 async function hostStartRace() {
     if (!currentRaceId || !canManageCurrentRace) return;
+    
+    // Проверка статуса перед действием
+    const { data: currentRace } = await db.from('races').select('status').eq('id', currentRaceId).single();
+    if (currentRace && currentRace.status !== 'waiting') {
+        alert("Ошибка: Гонку можно запустить только из статуса ожидания (Waiting).");
+        return loadRaceData();
+    }
 
     const delaySec = parseInt(document.getElementById('countdownSelect').value) || 10;
     if (!confirm(tr('confirm.startRace', { seconds: delaySec }))) return;
@@ -1431,6 +1446,14 @@ async function hostStartRace() {
 
 async function hostFinishRace() {
     if (!currentRaceId || !canManageCurrentRace) return;
+    
+    // Проверка статуса перед действием
+    const { data: currentRace } = await db.from('races').select('status').eq('id', currentRaceId).single();
+    if (currentRace && currentRace.status !== 'active') {
+        alert("Ошибка: Завершить можно только активную гонку (Active).");
+        return loadRaceData();
+    }
+    
     if (!confirm(tr('confirm.finishRace'))) return;
 
     // Сначала фиксируем снимок топа (отстающие → DNF), затем закрываем гонку.
@@ -2564,4 +2587,80 @@ async function loadRaceHistory() {
         console.error(err);
         container.innerHTML = `<div class="empty-state"><p>${tr('common.loadingError')}</p></div>`;
     }
+}
+// === OBS OVERLAY MODAL ===
+
+function showObsSettingsModal() {
+    const modal = document.getElementById('obsSettingsModal');
+    const select = document.getElementById('obsPlayerSelect');
+    
+    select.innerHTML = '';
+    
+    const cards = document.querySelectorAll('.player-card[data-player-id]');
+    if (cards.length > 0) {
+        cards.forEach(card => {
+            const pid = card.getAttribute('data-player-id');
+            const nameEl = card.querySelector('.player-name');
+            let pName = pid;
+            if (nameEl) {
+                pName = Array.from(nameEl.childNodes)
+                    .filter(n => n.nodeType === Node.TEXT_NODE)
+                    .map(n => n.textContent.trim())
+                    .join('') || pid;
+                if(!pName || pName === pid) pName = nameEl.textContent.trim().replace('📺', '').trim();
+            }
+            const opt = document.createElement('option');
+            opt.value = pid;
+            opt.textContent = pName;
+            if (pid === currentPlayerId) opt.selected = true;
+            select.appendChild(opt);
+        });
+    } else {
+        const opt = document.createElement('option');
+        opt.value = "";
+        opt.textContent = "Нет участников";
+        select.appendChild(opt);
+    }
+    
+    modal.classList.add('active');
+    generateObsUrl();
+}
+
+function closeObsSettingsModal() {
+    document.getElementById('obsSettingsModal').classList.remove('active');
+}
+
+function generateObsUrl() {
+    if (!currentRaceId) return;
+    
+    const select = document.getElementById('obsPlayerSelect');
+    const playerId = select.value;
+    if (!playerId) return;
+
+    const showName = document.getElementById('obsShowName').checked ? '1' : '0';
+    const showTimer = document.getElementById('obsShowTimer').checked ? '1' : '0';
+    const showSplit = document.getElementById('obsShowSplit').checked ? '1' : '0';
+    const showMillis = document.getElementById('obsShowMillis').checked ? '1' : '0';
+    
+    let ct = document.getElementById('obsTimerColor').value.replace('#', '');
+    let cn = document.getElementById('obsNameColor').value.replace('#', '');
+    let cs = document.getElementById('obsSplitColor').value.replace('#', '');
+    let pos = document.getElementById('obsPosition').value;
+    
+    let bg = document.getElementById('obsBg').value.trim();
+    if (bg.startsWith('#')) bg = bg.substring(1);
+    
+    const baseUrl = window.location.origin + window.location.pathname.replace('index.html', '').replace(/\/$/, '') + '/obs.html';
+    const url = `${baseUrl}?raceId=${currentRaceId}&playerId=${playerId}&name=${showName}&timer=${showTimer}&ms=${showMillis}&split=${showSplit}&pos=${pos}&ct=${ct}&cn=${cn}&cs=${cs}&bg=${bg}&v=${Date.now()}`;
+    
+    document.getElementById('obsUrl').value = url;
+}
+
+document.getElementById('obsPlayerSelect')?.addEventListener('change', generateObsUrl);
+
+function copyObsUrl() {
+    const input = document.getElementById('obsUrl');
+    input.select();
+    document.execCommand('copy');
+    showToast('URL скопирован в буфер обмена!');
 }
