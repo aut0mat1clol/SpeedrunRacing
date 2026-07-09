@@ -1234,8 +1234,10 @@ function updateTwitchBadgesInGrid() {
 
         if (twitchUsername) {
             if (!existing) {
-                const header = card.querySelector('.player-header');
-                if (header) header.insertAdjacentHTML('afterend', twitchWatchButtonHtml(twitchUsername));
+                // Слот присутствует у каждой карточки, даже без стрима. За счёт
+                // одинаковой высоты таймеры и списки сплитов не съезжают вниз.
+                const slot = card.querySelector('.player-stream-slot');
+                if (slot) slot.insertAdjacentHTML('beforeend', twitchWatchButtonHtml(twitchUsername));
             }
         } else if (existing) {
             existing.remove();
@@ -1411,7 +1413,9 @@ function updatePlayersGrid(players, readyMap) {
                 </div>
             </div>
 
-            ${twitchWatchButtonHtml(liveTwitch)}
+            <div class="player-stream-slot">
+                ${twitchWatchButtonHtml(liveTwitch)}
+            </div>
 
             ${timeDisplay}
 

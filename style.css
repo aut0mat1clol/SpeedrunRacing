@@ -1002,6 +1002,16 @@ a.howto-download:hover .download-badge { background: var(--primary); color: #081
     animation: twitchPulse 1.8s ease-in-out infinite;
 }
 .twitch-live-badge:hover { background: color-mix(in srgb, #9147ff 32%, transparent); }
+
+/* Одинаковое место под Twitch-бейдж есть у каждой карточки. Раньше бейдж
+   добавлялся отдельной строкой только стримеру и сдвигал его таймер/сплиты. */
+.player-stream-slot {
+    height: 2.35rem;
+    display: flex;
+    align-items: flex-start;
+}
+.player-stream-slot .twitch-live-badge { margin-bottom: 0; }
+
 @keyframes twitchPulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.65; }
