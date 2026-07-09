@@ -122,6 +122,11 @@
             return;
         }
 
+        // Компонент отправляет PATCH параллельно; более старый запрос иногда
+        // приходит после нового. Во время racing время монотонно, поэтому такой
+        // пакет игнорируем вместо визуального отката OBS-таймера.
+        if (reported < anchor.lastReported) return;
+
         if (reported !== anchor.lastReported) {
             const freezeAfter = LIVE_FREEZE_AFTER[timingMethod] || 650;
             const wasFrozen = (now - anchor.lastSeenAt) > freezeAfter || anchor.isPaused;

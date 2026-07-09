@@ -44,6 +44,7 @@ let currentRaceId     = null;
 let currentPlayerId   = null;
 let currentPlayerName = null;
 let raceStartTime     = null;
+let currentRaceStatus = null;
 let timerInterval     = null;
 let isReady           = false;
 let realtimeChannel   = null;
@@ -58,6 +59,16 @@ let canManageCurrentRace = false; // может ли текущий пользо
 
 function tr(key, vars) {
     return (typeof window.t === 'function') ? window.t(key, vars) : key;
+}
+
+function safeJsonObject(value) {
+    if (!value || typeof value !== 'string') return {};
+    try {
+        const parsed = JSON.parse(value);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return {};
+    }
 }
 
 function showToast(message, type = 'success') {
@@ -170,6 +181,10 @@ async function loadUserFromStorage() {
             currentUser = { id: data.session.user.id };
             await loadCurrentProfile();
             updateAuthUI();
+            // При прямом открытии #race/... роутер и восстановление сессии
+            // идут параллельно. Повторно загружаем гонку уже с правами хоста,
+            // иначе авто-сохранение истории могло так и не включиться.
+            if (currentRaceId) await loadRaceData();
             return true;
         }
     } catch (e) {
@@ -480,15 +495,20 @@ function showRaceList() {
     document.getElementById('raceListScreen').style.display = '';
     document.getElementById('raceScreen').style.display     = 'none';
     currentRaceId      = null;
+    currentRaceStatus  = null;
     autoStartTriggered = false;
     if (realtimeChannel) { db.removeChannel(realtimeChannel); realtimeChannel = null; }
+    if (fallbackPollInterval) { clearInterval(fallbackPollInterval); fallbackPollInterval = null; }
+    resetParticipantCache();
     stopTwitchLiveWatcher();
     loadRaceList();
 }
 
 function showRaceScreen(raceId) {
     currentRaceId      = raceId;
+    currentRaceStatus  = null;
     autoStartTriggered = false;
+    resetParticipantCache(raceId);
     document.getElementById('raceListScreen').style.display = 'none';
     document.getElementById('raceScreen').style.display     = '';
     
@@ -622,6 +642,7 @@ async function loadRaceData() {
 }
 
 function updateRaceUI(race) {
+    currentRaceStatus = race.status || null;
     document.getElementById('raceGame').textContent     = race.game     || 'Unknown Game';
     document.getElementById('raceCategory').textContent = race.category || '---';
     document.getElementById('raceName').textContent     = race.name     || race.id;
@@ -704,125 +725,341 @@ async function fetchPlayersTwitchUsernames(playerNames) {
     return result;
 }
 
+// Локальный кэш нужен не только для производительности. Раньше каждое
+// realtime-событие запускало ещё два REST-запроса (players + ready). Из-за
+// этого точное время доходило до экрана с дополнительной задержкой, а ответы
+// могли завершаться не в том порядке. Теперь payload из Realtime применяется
+// сразу, а полный запрос остаётся только начальной загрузкой/страховочным poll.
 let loadPlayersReqId = 0;
-async function loadPlayers() {
-    if (!currentRaceId) return;
-    const reqId = ++loadPlayersReqId;
-    try {
-        const [playersRes, readyRes] = await Promise.all([
-            db.from('players').select('*').eq('race_id', currentRaceId),
-            db.from('ready').select('*').eq('race_id', currentRaceId)
-        ]);
-        if (reqId !== loadPlayersReqId) return;
-        const players  = playersRes.data || [];
-        const readyMap = {};
-        (readyRes.data || []).forEach(r => { readyMap[r.player_id] = r.ready; });
+let participantCacheRaceId = null;
+let currentPlayersCache = new Map();
+let currentReadyCache = {};
+let participantArchive = new Map(); // не теряем финишёра при Disconnect в компоненте
+let excludedParticipantIds = new Set(); // участники, которых хост исключил намеренно
+let participantRevision = 0;
+let playerRevisionById = new Map();
+let readyRevision = 0;
+let readyRevisionById = new Map();
+let participantRenderQueued = false;
+let shouldCheckReadyAfterRender = false;
+let lastTwitchRosterKey = '';
+let lastResultsStateKey = '';
 
-        // Twitch: узнаём привязанные ники участников и кто из них сейчас live.
-        // Не блокируем основной рендер карточек — сначала рисуем без Twitch,
-        // затем, когда данные придут, перерисовываем ту же сетку.
-        updatePlayersGrid(players, readyMap);
-        attachTwitchInfoToPlayers(players, readyMap);
-
-        updateReadyCount(players.length, players.filter(p => readyMap[p.id]).length);
-        document.getElementById('lastUpdated').textContent =
-            tr('common.updated') + ' ' + new Date().toLocaleTimeString((typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU');
-
-        // Живой топ: показываем по мере финиша участников.
-        showRaceResults();
-
-        // Авто-завершение: когда ВСЕ участники финишировали — фиксируем
-        // снимок топа и переводим гонку в finished (делает только хост,
-        // чтобы запись инициировалась один раз).
-        if (canManageCurrentRace) maybeFinalizeRace(players);
-
-        // Авто-старт: только если пользователь может управлять гонкой
-        if (canManageCurrentRace) checkAutoStart(players, readyMap);
-    } catch (err) { console.error(err); }
+function resetParticipantCache(raceId = null) {
+    participantCacheRaceId = raceId;
+    currentPlayersCache = new Map();
+    currentReadyCache = {};
+    participantArchive = new Map();
+    excludedParticipantIds = new Set();
+    participantRevision = 0;
+    playerRevisionById = new Map();
+    readyRevision = 0;
+    readyRevisionById = new Map();
+    participantRenderQueued = false;
+    shouldCheckReadyAfterRender = false;
+    lastTwitchRosterKey = '';
+    lastResultsStateKey = '';
+    Object.keys(liveTimeAnchors).forEach(id => delete liveTimeAnchors[id]);
 }
 
-// Все ли активные участники добежали → авто-фиксация снимка топа.
+// PATCH-запросы компонента отправляются параллельно и иногда завершаются не
+// по порядку. Пока игрок бежит, его total_time должен быть монотонным: старый
+// пакет не имеет права откатывать уже показанное время назад.
+function mergeParticipantRecord(previous, incoming) {
+    if (!previous) return incoming;
+    // В рамках одной гонки finish — терминальное состояние. Нажатие Reset или
+    // поздний старый пакет не должны превращать уже финишировавшего в DNF.
+    if (previous.status === 'finished' && incoming.status !== 'finished') return previous;
+    if (previous.status === 'racing' && incoming.status === 'racing' &&
+        Number(incoming.total_time || 0) < Number(previous.total_time || 0)) {
+        return { ...incoming, total_time: previous.total_time };
+    }
+    return incoming;
+}
+
+function archivedPlayers() {
+    return Array.from(participantArchive.values())
+        .filter(p => !excludedParticipantIds.has(p.id));
+}
+
+function scheduleParticipantRender(checkReady = false) {
+    shouldCheckReadyAfterRender = shouldCheckReadyAfterRender || checkReady;
+    if (participantRenderQueued) return;
+    participantRenderQueued = true;
+
+    const flush = () => {
+        participantRenderQueued = false;
+        const runReadyCheck = shouldCheckReadyAfterRender;
+        shouldCheckReadyAfterRender = false;
+        renderParticipantState(runReadyCheck);
+    };
+
+    // requestAnimationFrame почти останавливается в фоновой вкладке. Хост всё
+    // равно должен принять финиш и сохранить историю, даже если смотрит OBS.
+    if (document.hidden) setTimeout(flush, 0);
+    else requestAnimationFrame(flush);
+}
+
+function renderParticipantState(checkReady = false) {
+    if (!currentRaceId || participantCacheRaceId !== currentRaceId) return;
+
+    const players = Array.from(currentPlayersCache.values());
+    const readyMap = currentReadyCache;
+    updatePlayersGrid(players, readyMap);
+
+    const rosterKey = players
+        .map(p => `${p.id}:${p.name || ''}`)
+        .sort()
+        .join('|');
+    if (rosterKey !== lastTwitchRosterKey) {
+        lastTwitchRosterKey = rosterKey;
+        attachTwitchInfoToPlayers(players);
+    }
+
+    updateReadyCount(players.length, players.filter(p => readyMap[p.id]).length);
+    const updatedEl = document.getElementById('lastUpdated');
+    if (updatedEl) {
+        updatedEl.textContent = tr('common.updated') + ' ' +
+            new Date().toLocaleTimeString((typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU');
+    }
+
+    // Топ меняется только при финише/удалении участника. Не запрашиваем
+    // race_results четыре раза в секунду на каждый входящий пакет времени.
+    const resultsKey = players
+        .map(p => `${p.id}:${p.status}:${p.status === 'finished' ? p.total_time : ''}`)
+        .sort()
+        .join('|');
+    if (resultsKey !== lastResultsStateKey) {
+        lastResultsStateKey = resultsKey;
+        showRaceResults(players);
+    }
+
+    if (canManageCurrentRace) {
+        // Архив включает участника даже если его компонент уже отключился и
+        // удалил строку из players. Поэтому DNF не исчезает, а авто-финиш не
+        // срабатывает преждевременно после Disconnect.
+        maybeFinalizeRace(archivedPlayers());
+        if (checkReady) checkAutoStart(players, readyMap);
+    }
+}
+
+function handlePlayerRealtime(payload) {
+    if (!currentRaceId || participantCacheRaceId !== currentRaceId) return;
+    const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+    // При REPLICA IDENTITY DEFAULT DELETE-payload может содержать только PK id.
+    if (!row || !row.id || (row.race_id && row.race_id !== currentRaceId)) return;
+
+    const revision = ++participantRevision;
+    playerRevisionById.set(row.id, revision);
+
+    if (payload.eventType === 'DELETE') {
+        if (excludedParticipantIds.has(row.id)) {
+            participantArchive.delete(row.id);
+        } else {
+            const latest = currentPlayersCache.get(row.id) || row;
+            participantArchive.set(row.id, mergeParticipantRecord(participantArchive.get(row.id), latest));
+        }
+        currentPlayersCache.delete(row.id);
+    } else {
+        excludedParticipantIds.delete(row.id); // повторное вступление после kick
+        const merged = mergeParticipantRecord(currentPlayersCache.get(row.id), row);
+        currentPlayersCache.set(row.id, merged);
+        participantArchive.set(row.id, mergeParticipantRecord(participantArchive.get(row.id), merged));
+    }
+    scheduleParticipantRender(false);
+}
+
+function handleReadyRealtime(payload) {
+    if (!currentRaceId || participantCacheRaceId !== currentRaceId) return;
+    const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+    if (!row || row.race_id !== currentRaceId) return;
+    const revision = ++readyRevision;
+    readyRevisionById.set(row.player_id, revision);
+    if (payload.eventType === 'DELETE') delete currentReadyCache[row.player_id];
+    else currentReadyCache[row.player_id] = !!row.ready;
+    scheduleParticipantRender(true);
+}
+
+async function loadPlayers() {
+    if (!currentRaceId) return;
+    const raceId = currentRaceId;
+    if (participantCacheRaceId !== raceId) resetParticipantCache(raceId);
+    const reqId = ++loadPlayersReqId;
+    const playerRevisionAtStart = participantRevision;
+    const readyRevisionAtStart = readyRevision;
+
+    try {
+        const [playersRes, readyRes] = await Promise.all([
+            db.from('players').select('*').eq('race_id', raceId).order('id', { ascending: true }),
+            db.from('ready').select('*').eq('race_id', raceId).order('player_id', { ascending: true })
+        ]);
+        if (reqId !== loadPlayersReqId || raceId !== currentRaceId) return;
+        if (playersRes.error) throw playersRes.error;
+        if (readyRes.error) throw readyRes.error;
+
+        const serverIds = new Set();
+        (playersRes.data || []).forEach(row => {
+            serverIds.add(row.id);
+            // Если после начала REST-запроса уже пришёл realtime payload этого
+            // игрока, он новее результата запроса — не перезаписываем его.
+            if ((playerRevisionById.get(row.id) || 0) > playerRevisionAtStart) return;
+            const merged = mergeParticipantRecord(currentPlayersCache.get(row.id), row);
+            currentPlayersCache.set(row.id, merged);
+            participantArchive.set(row.id, mergeParticipantRecord(participantArchive.get(row.id), merged));
+        });
+
+        // Полный poll также должен убрать строки, реально удалённые на сервере.
+        // Архив при этом сохраняется для корректного DNF/истории. INSERT,
+        // пришедший по realtime уже после старта poll, удалять нельзя.
+        Array.from(currentPlayersCache.keys()).forEach(id => {
+            const changedAfterRequest = (playerRevisionById.get(id) || 0) > playerRevisionAtStart;
+            if (!serverIds.has(id) && !changedAfterRequest) currentPlayersCache.delete(id);
+        });
+
+        const serverReadyIds = new Set();
+        (readyRes.data || []).forEach(r => {
+            serverReadyIds.add(r.player_id);
+            if ((readyRevisionById.get(r.player_id) || 0) <= readyRevisionAtStart) {
+                currentReadyCache[r.player_id] = !!r.ready;
+            }
+        });
+        Object.keys(currentReadyCache).forEach(id => {
+            const changedAfterRequest = (readyRevisionById.get(id) || 0) > readyRevisionAtStart;
+            if (!serverReadyIds.has(id) && !changedAfterRequest) delete currentReadyCache[id];
+        });
+        renderParticipantState(true);
+    } catch (err) {
+        console.error('Ошибка загрузки участников:', err);
+    }
+}
+
+// Все ли участники, которые реально стартовали, добежали → сохраняем снимок.
 let finalizeInProgress = false;
 async function maybeFinalizeRace(players) {
-    if (finalizeInProgress) return;
+    if (finalizeInProgress || currentRaceStatus !== 'active') return;
     if (!players || players.length === 0) return;
 
-    // Участвующие — те, кто реально вступил в забег.
     const racers = players.filter(p => ['racing', 'finished'].includes(p.status));
-    if (racers.length === 0) return;
-
-    const allFinished = racers.every(p => p.status === 'finished');
-    if (!allFinished) return;
-
-    // Гонка ещё активна? Проверяем, чтобы не фиксировать повторно.
-    const { data: race } = await db.from('races')
-        .select('status').eq('id', currentRaceId).single();
-    if (!race || race.status !== 'active') return;
+    if (racers.length === 0 || !racers.every(p => p.status === 'finished')) return;
 
     finalizeInProgress = true;
     try {
+        // Повторно проверяем статус перед транзакцией, чтобы две вкладки хоста
+        // не закрыли одну гонку одновременно.
+        const { data: race, error: raceError } = await db.from('races')
+            .select('status').eq('id', currentRaceId).single();
+        if (raceError) throw raceError;
+        if (!race || race.status !== 'active') return;
+
         await finalizeRaceResults(players);
-        await db.from('races')
+        const { error: finishError } = await db.from('races')
             .update({ status: 'finished' })
             .eq('id', currentRaceId)
             .eq('status', 'active');
+        if (finishError) throw finishError;
         await loadRaceData();
     } catch (err) {
+        // Важно: при ошибке снимка гонка остаётся active. Раньше ошибка только
+        // писалась в console, после чего статус всё равно становился finished —
+        // именно так получались пустые карточки истории.
         console.error('Ошибка авто-завершения гонки:', err);
     } finally {
         finalizeInProgress = false;
     }
 }
 
-// Сохранить снимок итогового топа в race_results.
-// players можно не передавать — тогда подгрузим сами.
-async function finalizeRaceResults(players) {
-    if (!currentRaceId) return;
+function buildFinalResultRows(players) {
+    const unique = new Map();
+    (players || []).forEach(p => {
+        if (p && p.id && !excludedParticipantIds.has(p.id)) {
+            unique.set(p.id, mergeParticipantRecord(unique.get(p.id), p));
+        }
+    });
 
-    if (!players) {
-        const { data } = await db.from('players')
-            .select('*').eq('race_id', currentRaceId);
-        players = data || [];
+    const all = Array.from(unique.values());
+    const finished = all
+        .filter(p => p.status === 'finished' && Number(p.total_time) > 0)
+        .sort((a, b) => Number(a.total_time) - Number(b.total_time) || String(a.id).localeCompare(String(b.id)));
+    const dnf = all
+        .filter(p => !(p.status === 'finished' && Number(p.total_time) > 0))
+        .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id)));
+
+    return [...finished, ...dnf].map((p, index) => ({
+        place: index + 1,
+        player_id: p.id,
+        player_name: p.name || p.id,
+        total_time: p.status === 'finished' && Number(p.total_time) > 0 ? Number(p.total_time) : null,
+        is_dnf: !(p.status === 'finished' && Number(p.total_time) > 0),
+        timing_method: p.timing_method || null
+    }));
+}
+
+// Схема race_results уже содержит round и round_started_at (её использовала
+// предыдущая версия истории). Старый upsert указывал несуществующий conflict
+// target race_id,player_id, поэтому PostgREST отклонял запись. Сохраняем раунд
+// тем же совместимым способом: определить номер, заменить строки, проверить
+// каждую ошибку и только после успеха разрешить перевод гонки в finished.
+async function finalizeRaceResults(players) {
+    if (!currentRaceId) throw new Error('Гонка не выбрана');
+    const raceId = currentRaceId;
+
+    let sourcePlayers = players;
+    if (!sourcePlayers) {
+        const { data, error } = await db.from('players')
+            .select('*').eq('race_id', raceId);
+        if (error) throw error;
+        sourcePlayers = data || [];
     }
 
-    // Финишировавшие → по времени; не финишировавшие → DNF в конце.
-    const finished = players
-        .filter(p => p.status === 'finished' && p.total_time > 0)
-        .sort((a, b) => (a.total_time || 0) - (b.total_time || 0));
-    const dnf = players.filter(p =>
-        !(p.status === 'finished' && p.total_time > 0));
+    // Добавляем последние локально увиденные состояния: компонент удаляет
+    // players при Disconnect, но это не должно стирать результат гонки.
+    const combined = [...(sourcePlayers || []), ...archivedPlayers()];
+    const rows = buildFinalResultRows(combined);
+    if (rows.length === 0) throw new Error('Нет участников для сохранения истории');
 
-    const rows = [];
-    finished.forEach((p, i) => {
-        rows.push({
-            race_id:       currentRaceId,
-            place:         i + 1,
-            player_id:     p.id,
-            player_name:   p.name,
-            total_time:    p.total_time,
-            is_dnf:        false,
-            timing_method: p.timing_method || null
-        });
-    });
-    dnf.forEach((p, i) => {
-        rows.push({
-            race_id:       currentRaceId,
-            place:         finished.length + i + 1,
-            player_id:     p.id,
-            player_name:   p.name,
-            total_time:    null,
-            is_dnf:        true,
-            timing_method: p.timing_method || null
-        });
-    });
+    const { data: race, error: raceError } = await db.from('races')
+        .select('started_at').eq('id', raceId).single();
+    if (raceError) throw raceError;
+    const roundStartedAt = race && race.started_at;
+    if (!roundStartedAt) throw new Error('У гонки отсутствует started_at');
 
-    if (rows.length === 0) return;
+    let roundNumber = 1;
+    const { data: existing, error: existingError } = await db.from('race_results')
+        .select('round')
+        .eq('race_id', raceId)
+        .eq('round_started_at', roundStartedAt)
+        .limit(1);
+    if (existingError) throw existingError;
 
-    // upsert по (race_id, player_id), чтобы повторная фиксация не падала.
-    const { error } = await db
-        .from('race_results')
-        .upsert(rows, { onConflict: 'race_id,player_id' });
-    if (error) console.error('Ошибка сохранения снимка топа:', error);
+    if (existing && existing.length > 0 && existing[0].round) {
+        roundNumber = existing[0].round;
+    } else {
+        const { data: maxRows, error: maxError } = await db.from('race_results')
+            .select('round')
+            .eq('race_id', raceId)
+            .order('round', { ascending: false })
+            .limit(1);
+        if (maxError) throw maxError;
+        roundNumber = maxRows && maxRows[0] && maxRows[0].round
+            ? Number(maxRows[0].round) + 1
+            : 1;
+    }
+
+    const { error: deleteError } = await db.from('race_results')
+        .delete()
+        .eq('race_id', raceId)
+        .eq('round_started_at', roundStartedAt);
+    if (deleteError) throw deleteError;
+
+    const snapshot = rows.map(r => ({
+        race_id: raceId,
+        round: roundNumber,
+        round_started_at: roundStartedAt,
+        ...r
+    }));
+    const { error: insertError } = await db.from('race_results').insert(snapshot);
+    if (insertError) throw insertError;
+    return snapshot;
 }
 
 // ============================================================
@@ -901,6 +1138,11 @@ function syncPlayerAnchor(p) {
     }
 
     prev.timingMethod = timingMethod;
+
+    // Защита от старого HTTP PATCH, который завершился позже нового. Reset
+    // меняет status на joined и удаляет якорь выше, поэтому во время racing
+    // легитимного отката total_time быть не должно.
+    if (reported < prev.lastReported) return;
 
     if (reported !== prev.lastReported) {
         const freezeAfter = LIVE_FREEZE_AFTER[timingMethod] || 650;
@@ -1015,8 +1257,33 @@ function updatePlayersGrid(players, readyMap) {
         const oa = order[a.status] !== undefined ? order[a.status] : 4;
         const ob = order[b.status] !== undefined ? order[b.status] : 4;
         if (oa !== ob) return oa - ob;
-        if (a.status === 'finished') return (a.total_time || 0) - (b.total_time || 0);
-        return 0;
+
+        if (a.status === 'finished') {
+            const byFinish = Number(a.total_time || Infinity) - Number(b.total_time || Infinity);
+            if (byFinish) return byFinish;
+        }
+
+        if (a.status === 'racing') {
+            // Позиция меняется только при реальном прохождении сплита, а не
+            // из-за того, чей сетевой пакет на 100–300 мс старее.
+            const byProgress = Number(b.current_split || 0) - Number(a.current_split || 0);
+            if (byProgress) return byProgress;
+
+            const aSplits = typeof a.splits === 'string' ? safeJsonObject(a.splits) : (a.splits || {});
+            const bSplits = typeof b.splits === 'string' ? safeJsonObject(b.splits) : (b.splits || {});
+            const splitIndex = Number(a.current_split || 0) - 1;
+            if (splitIndex >= 0) {
+                const at = Number(aSplits[String(splitIndex)] || Infinity);
+                const bt = Number(bSplits[String(splitIndex)] || Infinity);
+                if (at !== bt) return at - bt;
+            }
+        }
+
+        // Обязательный tie-breaker. REST без ORDER BY раньше возвращал равные
+        // строки в произвольном порядке, поэтому карточки менялись местами на
+        // каждом realtime-обновлении.
+        return String(a.name || a.id).localeCompare(String(b.name || b.id)) ||
+            String(a.id).localeCompare(String(b.id));
     });
 
     const leaderTime = sorted.reduce((min, p) =>
@@ -1053,8 +1320,8 @@ function updatePlayersGrid(players, readyMap) {
         const delta    = p.total_time && leaderTime !== Infinity && !isLeader
             ? formatDelta(p.total_time - leaderTime) : null;
 
-        const splits     = typeof p.splits      === 'string' ? JSON.parse(p.splits)      : (p.splits      || {});
-        const names      = typeof p.split_names === 'string' ? JSON.parse(p.split_names) : (p.split_names || {});
+        const splits     = typeof p.splits      === 'string' ? safeJsonObject(p.splits)      : (p.splits      || {});
+        const names      = typeof p.split_names === 'string' ? safeJsonObject(p.split_names) : (p.split_names || {});
         const splitCount = p.split_count || Object.keys(splits).length || 0;
 
         const kickBtn = canManageCurrentRace && !isMe
@@ -1255,10 +1522,10 @@ function setupRealtimeListeners() {
             payload => { if (payload.new) updateRaceUI(payload.new); })
         .on('postgres_changes',
             { event: '*', schema: 'public', table: 'players', filter: 'race_id=eq.' + currentRaceId },
-            () => loadPlayers())
+            handlePlayerRealtime)
         .on('postgres_changes',
             { event: '*', schema: 'public', table: 'ready',   filter: 'race_id=eq.' + currentRaceId },
-            () => loadPlayers())
+            handleReadyRealtime)
         .on('postgres_changes',
             { event: '*', schema: 'public', table: 'race_results', filter: 'race_id=eq.' + currentRaceId },
             () => showRaceResults())
@@ -1457,14 +1724,20 @@ async function hostFinishRace() {
     if (!confirm(tr('confirm.finishRace'))) return;
 
     // Сначала фиксируем снимок топа (отстающие → DNF), затем закрываем гонку.
-    await finalizeRaceResults();
-
-    const { error } = await db.from('races')
-        .update({ status: 'finished' })
-        .eq('id', currentRaceId);
-
-    if (error) alert(tr('alert.error') + error.message);
-    else await loadRaceData();
+    // Если запись истории не удалась, статус НЕ меняем: иначе восстановить
+    // результаты после Disconnect уже невозможно.
+    try {
+        await finalizeRaceResults(archivedPlayers());
+        const { error } = await db.from('races')
+            .update({ status: 'finished' })
+            .eq('id', currentRaceId)
+            .eq('status', 'active');
+        if (error) throw error;
+        await loadRaceData();
+    } catch (err) {
+        console.error('Ошибка сохранения истории:', err);
+        alert(tr('alert.error') + (err.message || String(err)));
+    }
 }
 
 async function hostKickPlayer(playerId, event) {
@@ -1472,10 +1745,23 @@ async function hostKickPlayer(playerId, event) {
     if (!canManageCurrentRace) return;
     if (!confirm(tr('confirm.kickPlayer'))) return;
 
-    await db.from('ready').delete()
-        .eq('race_id', currentRaceId).eq('player_id', playerId);
-    await db.from('players').delete().eq('id', playerId);
-    await loadPlayers();
+    excludedParticipantIds.add(playerId);
+    participantArchive.delete(playerId);
+    try {
+        const { error: readyError } = await db.from('ready').delete()
+            .eq('race_id', currentRaceId).eq('player_id', playerId);
+        if (readyError) throw readyError;
+        const { error: playerError } = await db.from('players').delete().eq('id', playerId);
+        if (playerError) throw playerError;
+        currentPlayersCache.delete(playerId);
+        delete currentReadyCache[playerId];
+        renderParticipantState(false);
+    } catch (err) {
+        excludedParticipantIds.delete(playerId);
+        console.error('Ошибка исключения участника:', err);
+        alert(tr('alert.error') + (err.message || String(err)));
+        await loadPlayers();
+    }
 }
 
 // ═══ УДАЛЕНИЕ ГОНКИ (только master-host) ═══
@@ -1512,18 +1798,21 @@ async function hostDeleteRace() {
 // ═══ Показать результаты гонки (live-топ + снимок) ═══
 // Если у гонки есть сохранённый снимок (race_results) — показываем его.
 // Иначе строим живой топ из текущих финишировавших игроков.
-async function showRaceResults() {
+async function showRaceResults(livePlayers = null) {
     const container  = document.getElementById('raceResultsContainer');
     const resultsDiv = document.getElementById('raceResults');
-    if (!container || !resultsDiv) return;
+    const raceId = currentRaceId;
+    if (!container || !resultsDiv || !raceId) return;
 
     try {
         // 1) Пытаемся показать сохранённый снимок завершённой гонки.
-        const { data: snapshot } = await db
+        const { data: snapshot, error: snapshotError } = await db
             .from('race_results')
             .select('*')
-            .eq('race_id', currentRaceId)
+            .eq('race_id', raceId)
             .order('place', { ascending: true });
+        if (snapshotError) throw snapshotError;
+        if (raceId !== currentRaceId) return;
 
         if (snapshot && snapshot.length > 0) {
             const rows = snapshot.map(r => ({
@@ -1538,11 +1827,18 @@ async function showRaceResults() {
             return;
         }
 
-        // 2) Иначе — живой топ из игроков.
-        const { data: players } = await db
-            .from('players')
-            .select('*')
-            .eq('race_id', currentRaceId);
+        // 2) Иначе — живой топ из уже полученного realtime-кэша. Только если
+        // функция вызвана без него, делаем отдельный запрос.
+        let players = livePlayers;
+        if (!players) {
+            const { data, error } = await db
+                .from('players')
+                .select('*')
+                .eq('race_id', raceId);
+            if (error) throw error;
+            if (raceId !== currentRaceId) return;
+            players = data || [];
+        }
 
         if (!players || players.length === 0) {
             resultsDiv.style.display = 'none';
@@ -2535,19 +2831,22 @@ async function loadRaceHistory() {
         // Подтягиваем топ-3 из снимков результатов (places 1, 2, 3).
         const podiums = {};
         try {
-            const { data: results } = await db
+            const { data: results, error: resultsError } = await db
                 .from('race_results')
                 .select('race_id, player_name, total_time, is_dnf, place')
                 .in('race_id', races.map(r => r.id))
                 .in('place', [1, 2, 3])
                 .order('place', { ascending: true });
+            if (resultsError) throw resultsError;
             (results || []).forEach(r => {
                 if (!r.is_dnf) {
                     if (!podiums[r.race_id]) podiums[r.race_id] = [];
                     podiums[r.race_id].push(r);
                 }
             });
-        } catch (e) { /* топ-3 необязателен */ }
+        } catch (e) {
+            console.warn('Не удалось загрузить топ-3 истории:', e);
+        }
 
         const lang = (typeof getCurrentLang === 'function' && getCurrentLang() === 'en') ? 'en-US' : 'ru-RU';
 
