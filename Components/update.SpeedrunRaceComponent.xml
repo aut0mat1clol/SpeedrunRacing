@@ -1,13 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <updates>
-  <update version="1.5.1">
-    <files>
-      <file path="Components/SpeedrunRaceComponent.dll" status="changed"/>
-    </files>
-    <changelog>
-      <change>Что-то изменилось</change>
-    </changelog>
-  </update>
   <update version="1.5.0">
     <files>
       <file path="Components/SpeedrunRaceComponent.dll" status="changed"/>
