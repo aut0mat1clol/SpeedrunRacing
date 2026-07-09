@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<updates>
+  <update version="1.5.0">
+    <files>
+      <file path="Components/SpeedrunRaceComponent.dll" status="changed"/>
+    </files>
+    <changelog>
+      <change>Latency fixes + auto-update layout (Components/).</change>
+    </changelog>
+  </update>
+  <update version="1.1.0">
+    <files>
+      <file path="Components/SpeedrunRaceComponent.dll" status="changed"/>
+    </files>
+    <changelog>
+      <change>Earlier 1.1.0 notes...</change>
+    </changelog>
+  </update>
+  <update version="1.0.0">
+    <files>
+      <file path="Components/SpeedrunRaceComponent.dll" status="changed"/>
+    </files>
+    <changelog>
+      <change>Initial public release.</change>
+    </changelog>
+  </update>
+</updates>
