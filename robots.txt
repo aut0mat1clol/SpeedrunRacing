@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# Sitemap link
+Sitemap: https://aut0mat1clol.github.io/SpeedrunRacing/sitemap.xml
